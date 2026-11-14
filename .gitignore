@@ -1,0 +1,18 @@
+# Datos locales y cachés de usuario (NUNCA subir fotos ni base de datos personal a GitHub)
+data/
+Lotes_Listos_Para_iCloud/
+icloud_snapshot/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sincronizador Google Fotos ➔ iCloud</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-badge">📸 ➔ ☁️</div>
+      <div>
+        <h1>Unir Google Fotos y Carpetas con tu iCloud</h1>
+        <p class="subtitle">100% Seguro (Cero borrados) · Lee fechas reales EXIF/JSON · Sube Fotos y Vídeos por Tandas</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="exiftool-badge" class="badge badge-ok">✓ ExifTool Activo</span>
+      <button class="btn btn-outline btn-sm" onclick="openPhotosApp()">🍎 Abrir App Fotos</button>
+      <button class="btn btn-outline btn-sm" onclick="openOutputFinder()">📂 Carpeta de Lotes</button>
+    </div>
+  </header>
+
+  <!-- Sticky Progress Bar when a task is running -->
+  <section id="job-banner" class="job-banner hidden">
+    <div class="job-header">
+      <div class="job-title-wrap">
+        <span class="spinner"></span>
+        <strong id="job-type-label">Procesando...</strong>
+        <span id="job-message">Iniciando...</span>
+      </div>
+      <div class="job-controls">
+        <span id="job-counter" class="job-counter">0%</span>
+        <button id="btn-pause" class="btn btn-warning btn-sm" onclick="controlJob('pause')">⏸ Pausar</button>
+        <button id="btn-resume" class="btn btn-primary btn-sm hidden" onclick="controlJob('run')">▶ Reanudar</button>
+        <button id="btn-stop" class="btn btn-danger btn-sm" onclick="controlJob('stop')">⏹ Detener</button>
+      </div>
+    </div>
+    <div class="progress-track">
+      <div id="job-progress-bar" class="progress-fill" style="width: 0%"></div>
+    </div>
+  </section>
+
+  <!-- Visual Celebration Banner when a Batch Completes -->
+  <section id="batch-finished-modal" class="celebration-banner hidden">
+    <div class="celebration-header">
+      <div>
+        <h2 id="celeb-title">🎉 ¡Tanda Finalizada con Éxito!</h2>
+        <p id="celeb-subtitle">Aquí tienes las fotos y vídeos que se acaban de importar con su fecha original restaurada.</p>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="openPhotosApp()">🍎 Ver Álbum en la App Fotos</button>
+        <button class="btn btn-secondary" onclick="openOutputFinder()">📂 Ver Archivos en Finder</button>
+        <button class="btn btn-outline" onclick="closeCelebration()">✕ Cerrar Aviso</button>
+      </div>
+    </div>
+    <div id="celeb-gallery" class="media-grid"></div>
+  </section>
+
+  <main class="container">
+    <!-- Top Visual Summary Cards -->
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-icon">☁️</div>
+        <div class="kpi-label">1. Tienes en iCloud</div>
+        <div id="kpi-icloud-total" class="kpi-value">0</div>
+        <div id="kpi-icloud-sub" class="kpi-sub">0 fotos · 0 vídeos</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon">📦</div>
+        <div class="kpi-label">2. Analizados (ZIPs + Carpetas)</div>
+        <div id="kpi-takeout-total" class="kpi-value">0</div>
+        <div id="kpi-takeout-sub" class="kpi-sub">Añade tus orígenes abajo</div>
+      </div>
+      <div class="kpi-card kpi-card-ok">
+        <div class="kpi-icon">✅</div>
+        <div class="kpi-label">Ya están en tu iCloud</div>
+        <div id="kpi-matched" class="kpi-value">0</div>
+        <div class="kpi-sub">Se ignoran para no duplicar</div>
+      </div>
+      <div class="kpi-card kpi-card-missing" onclick="goToMissingGallery()" style="cursor:pointer" title="Haz clic para ver las miniaturas de las que faltan">
+        <div class="kpi-icon">🔍</div>
+        <div class="kpi-label">Faltan por Subir a iCloud</div>
+        <div id="kpi-missing" class="kpi-value">0</div>
+        <div id="kpi-missing-sub" class="kpi-sub">0 fotos · 0 vídeos (0 MB)</div>
+      </div>
+      <div class="kpi-card kpi-card-done" onclick="goToImportedGallery()" style="cursor:pointer" title="Haz clic para ver las fotos ya importadas">
+        <div class="kpi-icon">🎉</div>
+        <div class="kpi-label">Ya Importados / Recuperados</div>
+        <div id="kpi-completed" class="kpi-value">0</div>
+        <div class="kpi-sub">Haz clic para ver cuáles son</div>
+      </div>
+    </section>
+
+    <!-- STEP-BY-STEP SOURCES: 3 Intuitive Columns -->
+    <section class="sources-trio">
+      <!-- Column 1: iCloud Library -->
+      <div class="panel step-panel">
+        <div class="step-badge">PASO 1 · TU ICLOUD ACTUAL</div>
+        <h2>Biblioteca iCloud (Mac)</h2>
+        <p class="panel-desc">
+          Lee el catálogo de tu app <strong>Fotos</strong> en modo solo-lectura (compatible con <em>Almacenamiento Optimizado</em>).
+        </p>
+        <div class="status-pill-box">
+          <span id="icloud-last-scan">Sin escanear aún</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" onclick="scanICloud('auto')">
+            ⚡ Actualizar Catálogo iCloud
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="openSqliteHelp()" title="Modo ultrarrápido de 2 segundos copiando Photos.sqlite">
+            🚀 Modo 2s (SQLite)
+          </button>
+        </div>
+      </div>
+
+      <!-- Column 2A: Google Takeout ZIPs -->
+      <div class="panel step-panel">
+        <div class="step-badge step-badge-zip">APARTADO 2A · ARCHIVOS .ZIP</div>
+        <h2>ZIPs de Google Takeout</h2>
+        <p class="panel-desc">
+          Elige un archivo <code>takeout-*.zip</code> suelto o la carpeta del NAS donde estén tus ZIPs. <strong>No hace falta descomprimirlos.</strong>
+        </p>
+        <div class="input-row">
+          <input type="text" id="zip-path-input" placeholder="Ruta a un archivo .zip o carpeta de ZIPs..." />
+        </div>
+        <div class="btn-group" style="margin-top: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="pickZipFile()">📄 Elegir 1 Archivo .ZIP</button>
+          <button class="btn btn-secondary btn-sm" onclick="pickFolder('zip-path-input')">📁 Elegir Carpeta de ZIPs</button>
+          <button class="btn btn-primary btn-sm" onclick="scanZips()">➕ Analizar ZIP(s)</button>
+        </div>
+        <div id="volumes-bar-zip" class="volumes-bar"></div>
+        <div class="sources-sublist">
+          <div class="sublist-title">ZIPs añadidos actualmente:</div>
+          <div id="zip-sources-list" class="sources-items"></div>
+        </div>
+      </div>
+
+      <!-- Column 2B: Uncompressed Folders -->
+      <div class="panel step-panel">
+        <div class="step-badge step-badge-folder">APARTADO 2B · CARPETAS SIN COMPRIMIR</div>
+        <h2>Carpetas de Fotos y Vídeos</h2>
+        <p class="panel-desc">
+          Añade cualquier carpeta que ya tengas descomprimida con fotos o vídeos. Lee su fecha real de cámara (EXIF) o JSON.
+        </p>
+        <div class="input-row">
+          <input type="text" id="folder-path-input" placeholder="Ruta a tu carpeta con fotos/vídeos sin comprimir..." />
+        </div>
+        <div class="btn-group" style="margin-top: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="pickFolder('folder-path-input')">📂 Elegir Carpeta en Finder</button>
+          <button class="btn btn-success btn-sm" onclick="scanCustomFolder()">➕ Añadir esta Carpeta</button>
+        </div>
+        <div style="margin-top: 6px;">
+          <label class="checkbox-label" style="font-size: 12px; color: #94a3b8;">
+            <input type="checkbox" id="folder-subfolders" checked /> Incluir también todas las subcarpetas de dentro
+          </label>
+        </div>
+        <div class="sources-sublist">
+          <div class="sublist-title">Carpetas sin comprimir añadidas:</div>
+          <div id="folder-sources-list" class="sources-items"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Navigation Tabs -->
+    <div class="tabs-bar">
+      <button id="tabbtn-years" class="tab-btn active" onclick="switchTab('tab-years', this)">
+        📅 1. Mapa Visual por Años y Meses
+      </button>
+      <button id="tabbtn-missing" class="tab-btn" onclick="switchTab('tab-files', this)">
+        🖼️ 2. Ver Fotos/Vídeos que Faltan (Con Miniaturas)
+      </button>
+      <button id="tabbtn-imported" class="tab-btn" onclick="switchTab('tab-imported', this)">
+        🎉 3. Fotos y Vídeos Ya Importados (<span id="tab-imported-count">0</span>)
+      </button>
+    </div>
+
+    <!-- TAB 1: Year / Month Comparison + Batch Launcher -->
+    <section id="tab-years" class="tab-content active">
+      <!-- Intuitive Batch Launcher Bar -->
+      <div class="panel batch-panel" style="margin-bottom: 20px;">
+        <div class="panel-header">
+          <div>
+            <h2>🚀 Subir / Procesar en Tandas (Pausable en cualquier momento)</h2>
+            <p class="panel-desc" style="margin-bottom:0">
+              Puedes pulsar directamente el botón <strong>"Subir Mes"</strong> en cualquier fila de la tabla de abajo, o configurar aquí el tamaño de tanda que prefieras.
+            </p>
+          </div>
+        </div>
+        <div class="batch-controls-grid" style="margin-top: 14px;">
+          <div class="form-group">
+            <label for="batch-ym">¿Qué periodo quieres subir?</label>
+            <select id="batch-ym">
+              <option value="ALL">Todos los meses con fotos faltantes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="batch-kind">¿Fotos, Vídeos o Ambos?</label>
+            <select id="batch-kind">
+              <option value="all">Fotos y Vídeos juntos</option>
+              <option value="photo">Solo Fotos</option>
+              <option value="video">Solo Vídeos</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="batch-limit">Tamaño máximo de esta tanda</label>
+            <select id="batch-limit">
+              <option value="25">25 archivos (Prueba rápida)</option>
+              <option value="100">100 archivos</option>
+              <option value="250" selected>250 archivos (Recomendado)</option>
+              <option value="500">500 archivos</option>
+              <option value="0">Todos los del periodo elegido</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="batch-mode">¿Dónde los ponemos?</label>
+            <select id="batch-mode">
+              <option value="import_photos_app" selected>
+                🍎 Meter directo en App Fotos del Mac (Sube a iCloud con Vídeos)
+              </option>
+              <option value="export_folders">
+                📁 Solo extraer en carpeta en mi Mac con fecha EXIF corregida
+              </option>
+              <option value="export_web_jpg">
+                🌐 Preparar para Web iCloud.com (Lotes de 500 JPG + vídeos aparte)
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="batch-action-bar">
+          <button class="btn btn-success btn-lg" onclick="startBatchFromForm()">
+            🚀 Iniciar Tanda Ahora
+          </button>
+          <span class="batch-hint">
+            Al terminar la tanda, te mostraremos en pantalla las miniaturas de todas las fotos y vídeos que se han importado.
+          </span>
+        </div>
+      </div>
+
+      <!-- Year & Month Visual Comparison -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Comparativa Año por Año y Mes por Mes</h2>
+          <div class="filter-pills">
+            <label class="checkbox-label">
+              <input type="checkbox" id="only-missing-months" checked onchange="renderYearMonthTable()" />
+              Mostrar solo los años/meses donde te faltan fotos o vídeos por subir
+            </label>
+          </div>
+        </div>
+        <div id="ym-container" class="ym-container"></div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Visual Gallery of Missing / Matched Files -->
+    <section id="tab-files" class="tab-content">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Explorador Visual de Fotos y Vídeos</h2>
+          <div class="inline-filters">
+            <select id="inspector-status" onchange="loadMissingFiles(1)">
+              <option value="missing" selected>❌ Faltan en iCloud (Pendientes)</option>
+              <option value="matched">✅ Ya estaban en iCloud</option>
+              <option value="imported_or_exported">🎉 Ya Importados / Extraídos</option>
+              <option value="error">⚠️ Con error</option>
+            </select>
+            <select id="inspector-source" onchange="loadMissingFiles(1)">
+              <option value="">Todos los orígenes (ZIPs + Carpetas)</option>
+            </select>
+            <select id="inspector-ym" onchange="loadMissingFiles(1)">
+              <option value="ALL">Todos los meses</option>
+            </select>
+            <select id="inspector-kind" onchange="loadMissingFiles(1)">
+              <option value="all">Fotos y Vídeos</option>
+              <option value="photo">Solo Fotos</option>
+              <option value="video">Solo Vídeos</option>
+            </select>
+          </div>
+        </div>
+        <div id="inspector-gallery" class="media-grid"></div>
+        <div id="inspector-pagination" class="pagination-bar"></div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Imported Results Gallery & Batch History -->
+    <section id="tab-imported" class="tab-content">
+      <div class="panel" style="margin-bottom: 20px;">
+        <div class="panel-header">
+          <div>
+            <h2>🎉 Galería de Fotos y Vídeos Ya Importados / Recuperados</h2>
+            <p class="panel-desc" style="margin-bottom:0">
+              Aquí puedes comprobar visualmente cada foto y vídeo que el programa ha restaurado e importado en tus tandas.
+            </p>
+          </div>
+          <div class="inline-filters">
+            <select id="imported-batch-filter" onchange="loadImportedGallery(1)">
+              <option value="">Todas las tandas realizadas</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="openPhotosApp()">🍎 Ver en App Fotos</button>
+            <button class="btn btn-outline btn-sm" onclick="openOutputFinder()">📂 Abrir Carpeta en Finder</button>
+          </div>
+        </div>
+        <div id="imported-gallery" class="media-grid"></div>
+        <div id="imported-pagination" class="pagination-bar"></div>
+      </div>
+
+      <div class="setup-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Historial de Tandas</h2>
+          </div>
+          <div id="batches-list" class="batches-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Registro de Actividad en Vivo</h2>
+          </div>
+          <pre id="live-logs" class="log-box">Listo...</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
