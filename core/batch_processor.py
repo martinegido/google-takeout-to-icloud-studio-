@@ -479,8 +479,8 @@ def _compute_dest_path(
     seq_idx: int,
     folder_chunk_size: int,
 ) -> str:
-    ym = item["year_month"] or "Sin-Fecha"
-    fn = item["filename"]
+    ym = os.path.basename(item["year_month"] or "Sin-Fecha")
+    fn = os.path.basename(item["filename"] or "archivo")
     stem, ext = os.path.splitext(fn)
     safe_fn = f"{stem}_{item['id']}{ext}"
 
@@ -496,7 +496,11 @@ def _compute_dest_path(
         lote_num = (seq_idx // max(1, folder_chunk_size)) + 1
         sub = os.path.join(output_root, f"{ym}_Tanda_{batch_id:03d}_Lote_{lote_num:02d}")
 
-    return os.path.join(sub, safe_fn)
+    dest = os.path.abspath(os.path.join(sub, safe_fn))
+    abs_root = os.path.abspath(output_root)
+    if os.path.commonpath([abs_root, dest]) != abs_root:
+        raise ValueError("Ruta de destino fuera del directorio permitido (Zip Slip bloqueado).")
+    return dest
 
 
 def _maybe_convert_for_web(mode: str, dest_path: str, kind: str) -> str:

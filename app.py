@@ -127,9 +127,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _check_request_security(self, is_post: bool = False) -> bool:
+        """
+        Protects the local server against DNS Rebinding and Cross-Site Request Forgery (CSRF)
+        from external websites open in the user's browser.
+        """
+        host = self.headers.get("Host", "")
+        allowed_hosts = {"localhost:8765", "127.0.0.1:8765", "localhost", "127.0.0.1"}
+        if host and host.split(":")[0] not in ("localhost", "127.0.0.1"):
+            self.send_error(403, "Forbidden Host (DNS Rebinding Protection)")
+            return False
+
+        if is_post:
+            origin = self.headers.get("Origin", "")
+            referer = self.headers.get("Referer", "")
+            if origin and not (
+                origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")
+            ):
+                self.send_error(403, "Forbidden Origin (CSRF Protection)")
+                return False
+            if not origin and referer and not (
+                referer.startswith("http://localhost:") or referer.startswith("http://127.0.0.1:")
+            ):
+                self.send_error(403, "Forbidden Referer (CSRF Protection)")
+                return False
+        return True
+
+    def _send_security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+
     def _send_json(self, data: Any, status: int = 200) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self._send_security_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -138,12 +169,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _read_json_body(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
-        if length <= 0:
+        if length <= 0 or length > 1024 * 1024:
             return {}
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
     def do_GET(self):
+        if not self._check_request_security(is_post=False):
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
@@ -298,13 +331,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def do_POST(self):
+        if not self._check_request_security(is_post=True):
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         body = self._read_json_body()
 
         if path == "/api/pick-folder":
-            prompt = body.get("prompt", "Selecciona la carpeta")
-            script = f'POSIX path of (choose folder with prompt "{prompt}")'
+            script = 'POSIX path of (choose folder with prompt "Selecciona la carpeta en tu Mac, Disco Externo o NAS")'
             proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
             if proc.returncode == 0 and proc.stdout.strip():
                 self._send_json({"status": "ok", "path": proc.stdout.strip()})
@@ -313,8 +347,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/pick-zip-file":
-            prompt = body.get("prompt", "Selecciona un archivo .ZIP de Google Takeout")
-            script = f'POSIX path of (choose file of type {{"zip", "public.zip-archive"}} with prompt "{prompt}")'
+            script = 'POSIX path of (choose file of type {"zip", "public.zip-archive"} with prompt "Selecciona un archivo .ZIP de Google Takeout")'
             proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
             if proc.returncode == 0 and proc.stdout.strip():
                 self._send_json({"status": "ok", "path": proc.stdout.strip()})
@@ -323,20 +356,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/open-finder":
-            target = body.get("path", DEFAULT_OUTPUT_ROOT)
-            target = os.path.expanduser(target)
-            os.makedirs(target, exist_ok=True)
-            subprocess.run(["open", target])
-            self._send_json({"status": "ok", "path": target})
+            os.makedirs(DEFAULT_OUTPUT_ROOT, exist_ok=True)
+            subprocess.run(["open", DEFAULT_OUTPUT_ROOT])
+            self._send_json({"status": "ok", "path": DEFAULT_OUTPUT_ROOT})
             return
 
         if path == "/api/reveal-file":
-            target = body.get("path", "")
-            if target and os.path.exists(target):
+            target = os.path.abspath(body.get("path", ""))
+            abs_out = os.path.abspath(DEFAULT_OUTPUT_ROOT)
+            if target and os.path.exists(target) and os.path.commonpath([abs_out, target]) == abs_out:
                 subprocess.run(["open", "-R", target])
                 self._send_json({"status": "ok"})
             else:
-                self._send_json({"error": "El archivo aún no está extraído en disco."}, status=404)
+                self._send_json({"error": "El archivo aún no está extraído en la carpeta de lotes."}, status=404)
             return
 
         if path == "/api/open-photos-app":

@@ -8,6 +8,15 @@ const MONTH_NAMES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return "0 MB";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -531,24 +540,26 @@ function renderMediaCardsHtml(items) {
       statusBadge = `<span class="media-status-badge badge-matched">Ya en iCloud</span>`;
     }
 
-    const srcName = item.source_path.split("/").filter(Boolean).pop();
+    const srcName = escapeHtml(item.source_path.split("/").filter(Boolean).pop());
     const srcLabel = item.source_type === "zip" ? `📦 ${srcName}` : `📂 ${srcName}`;
+    const safeFn = escapeHtml(item.filename);
+    const safeInner = escapeHtml(item.inner_path);
     const revealBtn = item.exported_path
-      ? `<button class="btn btn-outline btn-sm" style="margin-top:6px;width:100%" onclick="revealFile('${item.exported_path.replace(/'/g, "\\'")}')">📂 Mostrar en Finder</button>`
+      ? `<button class="btn btn-outline btn-sm" style="margin-top:6px;width:100%" onclick="revealFile('${item.exported_path.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}')">📂 Mostrar en Finder</button>`
       : "";
 
     return `
       <div class="media-card">
         <div class="media-thumb-wrap">
-          <img src="/api/thumbnail?id=${item.id}" loading="lazy" alt="${item.filename}" onerror="this.style.display='none'" />
+          <img src="/api/thumbnail?id=${item.id}" loading="lazy" alt="${safeFn}" onerror="this.style.display='none'" />
           <span class="media-kind-badge">${kindBadge} · ${formatBytes(item.filesize)}</span>
           ${statusBadge}
         </div>
         <div class="media-info">
-          <div class="media-filename" title="${item.filename}">${item.filename}</div>
+          <div class="media-filename" title="${safeFn}">${safeFn}</div>
           <div class="media-date">📅 ${formatDate(item.timestamp)}</div>
-          <div class="media-source" title="${item.inner_path}">${srcLabel} (${item.date_source})</div>
-          ${item.match_reason && item.status === "matched" ? `<div style="font-size:11px;color:#34d399;">${item.match_reason}</div>` : ""}
+          <div class="media-source" title="${safeInner}">${srcLabel} (${escapeHtml(item.date_source)})</div>
+          ${item.match_reason && item.status === "matched" ? `<div style="font-size:11px;color:#34d399;">${escapeHtml(item.match_reason)}</div>` : ""}
           ${revealBtn}
         </div>
       </div>
