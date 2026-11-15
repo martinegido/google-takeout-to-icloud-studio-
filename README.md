@@ -1,91 +1,177 @@
 # 📸➔☁️ Google Takeout & Folders to iCloud Photos Studio (macOS)
 
-Herramienta visual web para **macOS** que compara tus archivos de **Google Fotos (Google Takeout `.zip`)** y **carpetas de fotos/vídeos sin comprimir** contra tu biblioteca actual de **iCloud Photos**, detectando exactamente qué años, meses y archivos te faltan y subiéndolos por tandas con su fecha original restaurada.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg?logo=apple)]()
+[![Python](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg?logo=python)]()
+[![Safe](https://img.shields.io/badge/Safety-Strictly%20Read--Only-success.svg)]()
+
+> **The missing bridge between Google Takeout / NAS photo dumps and Apple iCloud Photos.**  
+> Effortlessly inspect 200+ GB of Google Takeout archives without unzipping them, pinpoint missing months, restore authentic camera EXIF dates, auto-transcode incompatible Google VP9 videos, and sync cleanly into macOS Photos in controlled, pausable batches.
 
 ---
 
-## ✨ ¿Qué problema resuelve?
-
-Pasar años de recuerdos desde Google Fotos o discos duros/NAS a iCloud Photos suele ser una pesadilla por cinco motivos que esta herramienta resuelve de forma automática:
-
-1. **No necesitas descomprimir cientos de GB de archivos `.zip`:** Lee la tabla interna de los `.zip` de Google Takeout directamente desde un **NAS** o disco externo y solo extrae las fotos/vídeos que realmente faltan en tu iCloud.
-2. **Cero Borrados (100% Seguro):** Trabaja en modo estrictamente **Solo Lectura (`Read-Only`)** sobre tus archivos originales y sobre tu biblioteca de Fotos de macOS.
-3. **Compatible con "Optimizar almacenamiento del Mac":** No necesita que las 40.000+ fotos de iCloud estén descargadas en el Mac; lee el catálogo local de nombres, fechas y metadatos.
-4. **Restauración exacta de fechas (`JSON` + `EXIF` + `QuickTime`):**
-   - Cruza cada foto/vídeo con su `.json` de Google Takeout (`photoTakenTime`).
-   - Si Google dividió el Takeout en varios volúmenes `.zip` y el `.json` quedó en otro archivo, extrae automáticamente la fecha real de captura incrustada en el `EXIF` / `QuickTime` mediante **ExifTool**.
-5. **Adiós al límite de 1.000 fotos y al bloqueo de vídeos de `icloud.com`:**
-   - La web `icloud.com/photos` rechaza vídeos grandes, rechaza archivos `.png`/`.heic` y limita las subidas.
-   - Esta herramienta importa por **tandas pausables** directamente a través de la app nativa **Fotos (`Photos.app`)** de macOS y **convierte automáticamente al vuelo con `FFmpeg` los vídeos con códec `VP9` (`vp09`) de Google a `H.264` (`avc1`)** para que Apple Photos nunca dé error de *"Formato desconocido"*.
+<p align="center">
+  <img src="docs/preview.svg" alt="Google Takeout to iCloud Photos Studio Dashboard" width="100%">
+</p>
 
 ---
 
-## 🖥️ Características Principales del Panel Web
+## 💡 Why This Tool?
 
-- **Apartado 1 — Lector iCloud Photos (Mac):** Escaneo vía Automatización oficial de `Photos.app` o modo instantáneo (2 segundos) mediante snapshot de solo lectura de `Photos.sqlite`.
-- **Apartado 2A — Archivos `.ZIP` de Google Takeout:** Añade `.zip` individuales o carpetas enteras de `.zip` en tu NAS sin descomprimirlos.
-- **Apartado 2B — Carpetas Sueltas Sin Comprimir:** Añade cualquier carpeta de fotos y vídeos descomprimidos; lee su fecha real de cámara (`EXIF`) para no confundirla con la fecha de copia del archivo.
-- **Mapa Visual por Años y Meses:** Muestra mes a mes cuántas fotos y vídeos tienes en iCloud, cuántas en tus orígenes y cuántas faltan (`🔴 Mes vacío en iCloud` vs `🟡 Parcial`).
-- **Deduplicación Inteligente:**
-  - Detecta coincidencias aunque cambie el formato (`.HEIC` en iCloud vs `.JPG` en Google Fotos).
-  - Detecta clips cortos de **Live Photos** cuya foto principal ya está en iCloud.
-  - Elimina duplicados internos de álbumes dentro del propio Google Takeout.
-- **Explorador Visual con Miniaturas Reales (`Thumbnails`):** Previsualiza `.JPG`, `.PNG`, `.HEIC`, `.MOV` y `.MP4` (incluso cuando siguen dentro de un archivo `.zip`).
-- **Gestor de Tandas Pausable + Galería Final de Importados:** Elige tandas de 25, 100, 250 o 500 archivos (o por Mes/Año), pausa o reanuda cuando quieras, y al terminar revisa la galería visual con todas las fotos y vídeos recién importados.
+Migrating or syncing years of photos and videos from Google Photos (or unorganized NAS hard drives) into Apple iCloud Photos is notoriously painful:
+
+| Pain Point with Standard Tools | How This Studio Solves It |
+| :--- | :--- |
+| **Extracting 200+ GB of `.zip` files** fills up your internal SSD. | **Zero-Extraction Central Directory Scanner**: Reads the file tables of 10 GB Takeout `.zip`s directly over local network / SMB NAS without extracting them to disk. Only missing items are extracted on demand. |
+| **`icloud.com/photos` web limits**: Rejects videos, drops non-JPEGs, and caps uploads at 1,000 files. | **Native AppleScript & JXA Automation**: Direct ingestion into macOS `Photos.app`, which immediately synchronizes with your iCloud Photo Library in the background. |
+| **Lost capture dates**: Google puts actual timestamps in companion `.json` files, leaving files with "Created Today" timestamps. | **Deep EXIF & JSON Stitcher**: Restores original `photoTakenTime` metadata into EXIF, IPTC, and QuickTime tracks via `exiftool`. |
+| **"Unknown Format" video errors**: Google Takeout frequently transcodes videos to Google VP9 (`vp09`), which macOS Photos rejects. | **Smart On-The-Fly Transcoder**: Automatically detects VP9 / AV1 streams and converts them to standard Apple-compatible H.264 (`avc1`) using `ffmpeg`. |
+| **macOS AppleEvents Sandbox Exhaustion**: Importing >1,000 items via scripts crashes macOS `AE.framework` with `[12: Cannot allocate memory]`. | **Self-Healing Lifecycle Management**: Automatically recycles `Photos.app` every 250 items, clearing memory buffers and auto-retrying seamlessly. |
+| **Risk of accidental deletion**: Migration scripts often delete or overwrite files. | **100% Read-Only Safety Guarantee**: Source files, NAS volumes, and existing photo libraries are never modified or deleted. |
 
 ---
 
-## 🛠️ Requisitos en macOS
+## ✨ Features
 
-1. **macOS** con la app **Fotos** sincronizada con iCloud.
-2. **Python 3.10+** y `Pillow`:
-   ```bash
-   pip3 install -r requirements.txt
-   ```
-3. **ExifTool** y **FFmpeg** (para restaurar fechas EXIF/QuickTime y convertir vídeos `VP9` de Google a `H.264` de Apple):
+- **Dual Source Scanning**:
+  - **Takeout Archives (`.zip`)**: Scan individual archives or entire NAS directories without unzipping.
+  - **Loose Folders**: Index loose files on external hard drives, preserving real camera capture dates.
+- **"Optimize Mac Storage" Friendly**:
+  - Inspects your local Photos metadata database without requiring 50,000+ photos to be downloaded locally.
+- **Year & Month Heatmap Matrix**:
+  - Instant visual overview of your photo collection timeline.
+  - Color-coded indicators: 🔴 completely missing months, 🟡 partially synchronized months, 🟢 fully matched months.
+- **Intelligent Deduplication**:
+  - Matches across formats (e.g., iPhone `.HEIC` in iCloud vs Google's `.JPG` export).
+  - Recognizes Live Photo video pairings to prevent duplicate video entries.
+  - Strips Google Takeout album duplicates automatically.
+- **Interactive Visual Gallery**:
+  - Real-time thumbnail previews directly from inside `.zip` archives.
+  - Separate "Missing in iCloud" and "Imported" galleries.
+- **Safe Batch Ingestion**:
+  - Select batch size (25, 100, 250, 500) or import by specific Year/Month.
+  - Real-time progress bar with live logs.
+  - Pausable and resumable at any moment.
+
+---
+
+## 📋 Prerequisites
+
+1. **macOS** with the native **Photos.app** configured with iCloud Photos.
+2. **Python 3.10+**
+3. **ExifTool & FFmpeg** (required for metadata stitching and video compatibility):
    ```bash
    brew install exiftool ffmpeg
    ```
 
 ---
 
-## 🚀 Cómo empezar
+## 🚀 Quick Start
 
-### Opción A: Doble clic desde Finder
-Haz doble clic en el archivo **`Iniciar_Panel.command`**. Se iniciará el servidor local y se abrirá automáticamente tu navegador en `http://localhost:8765`.
+### 1. Clone the repository
+```bash
+git clone https://github.com/martinegido/google-takeout-to-icloud-studio-.git
+cd google-takeout-to-icloud-studio-
+```
 
-### Opción B: Desde la Terminal
+### 2. Install Python dependencies
+```bash
+pip3 install -r requirements.txt
+```
+
+### 3. Launch the Studio
+You can start the studio with a single command:
 ```bash
 python3 app.py
 ```
-Y abre en tu navegador: **[http://localhost:8765](http://localhost:8765)**
+*Or double-click `Iniciar_Panel.command` in Finder.*
+
+Open your browser at **[http://localhost:8765](http://localhost:8765)**.
 
 ---
 
-## 📂 Estructura del Proyecto
+## 📖 How to Use
+
+```mermaid
+flowchart LR
+    A["1. Scan iCloud"] --> B["2. Scan Takeout / Folders"]
+    B --> C["3. Compare & Heatmap"]
+    C --> D["4. Review Missing Items"]
+    D --> E["5. Batch Import with EXIF & Transcoding"]
+```
+
+1. **Step 1: Scan iCloud Library**  
+   Click **Scan iCloud Library**. The studio uses macOS automation to index your existing photos without touching your disk storage.
+2. **Step 2: Add Sources**  
+   - Enter your Google Takeout directory path (e.g. `/Volumes/nas/takeout/`). The studio reads the ZIP central directories in seconds.
+   - Or add uncompressed folder paths.
+3. **Step 3: Analyze the Heatmap**  
+   Review the Year/Month matrix to see which years have gaps in iCloud.
+4. **Step 4: Execute Batch Sync**  
+   Choose a batch size or select a specific month. The studio will:
+   - Extract missing items to a temporary staging folder.
+   - Re-inject authentic timestamps from Takeout `.json` or embedded EXIF.
+   - Transcode any incompatible VP9 video codec into Apple H.264.
+   - Ingest into Photos.app under a dedicated album (e.g., `Google Takeout (2018-06)`).
+
+---
+
+## 🔒 Security & Privacy
+
+- **100% Offline & Local**: The built-in dashboard runs exclusively on `127.0.0.1`. No telemetry, analytics, or remote network calls.
+- **CSRF & DNS-Rebinding Protection**: Requests require a unique session token generated on boot, and HTTP Host headers are strictly validated.
+- **Strict Read-Only Operations**: Takeout archives and existing photo libraries are never touched or modified.
+
+---
+
+## 📁 Project Architecture
 
 ```text
-unirgooglefotosyfotosicloud/
-├── app.py                     # Servidor web local y API de orquestación en segundo plano
-├── Iniciar_Panel.command      # Lanzador de doble clic para macOS
-├── requirements.txt           # Dependencias de Python
+google-takeout-to-icloud-studio-/
+├── app.py                     # Local web server & REST API (CSRF & Host protected)
+├── Iniciar_Panel.command      # 1-Click macOS launcher script
+├── requirements.txt           # Python dependencies (Pillow, etc.)
 ├── core/
-│   ├── database.py            # Base de datos SQLite persistente (data/sync_state.db)
-│   ├── scanner_icloud.py      # Lector 100% Read-Only del catálogo de iCloud Photos en Mac
-│   ├── scanner_takeout.py     # Escáner de ZIPs de Takeout (sin descomprimir) y Carpetas sueltas
-│   ├── matcher.py             # Motor de cruce, deduplicación y matriz por Años/Meses
-│   ├── batch_processor.py     # Motor de tandas pausables, ExifTool, FFmpeg (VP9->H.264) y Photos.app
-│   ├── thumbnails.py          # Generador de miniaturas para HEIC, JPG, PNG, MOV y MP4
-│   └── utils.py               # Normalización de nombres y utilidades de fechas
-└── static/
-    ├── index.html             # Interfaz gráfica paso a paso
-    ├── styles.css             # Diseño visual oscuro de alto contraste
-    └── app.js                 # Lógica interactiva en tiempo real
+│   ├── database.py            # SQLite state database (data/sync_state.db)
+│   ├── scanner_icloud.py      # Read-only Apple Photos catalog reader
+│   ├── scanner_takeout.py     # Central-directory ZIP reader & loose folder scanner
+│   ├── matcher.py             # Timestamp & filename deduplication engine
+│   ├── batch_processor.py     # Staging, ExifTool stitcher, FFmpeg transcoder & Photos.app runner
+│   ├── thumbnails.py          # On-demand thumbnail caching (HEIC, JPG, PNG, MOV, MP4)
+│   └── utils.py               # Path sanitization, string normalization & date parser
+├── static/
+│   ├── index.html             # Clean responsive UI
+│   ├── styles.css             # Dark theme design system
+│   └── app.js                 # Real-time state management and polling
+└── docs/
+    └── preview.svg            # UI mockup diagram
 ```
 
 ---
 
-## 🔒 Garantía de Seguridad
+<details>
+<summary>🇪🇸 <b>Haz clic aquí para leer la documentación en Español</b></summary>
 
-- El código **jamás ejecuta operaciones de borrado** sobre tus carpetas de origen, tu NAS ni tu biblioteca de Fotos.
-- Todos los archivos procesados en una tanda se **copian/extraen** primero a `Lotes_Listos_Para_iCloud/` antes de restaurar sus metadatos e importarse en un álbum identificado (`Google Takeout (YYYY-MM)`) dentro de la app Fotos.
+### 📸➔☁️ Google Takeout & Folders to iCloud Photos Studio (macOS)
+
+Herramienta visual para macOS que compara tus archivos de **Google Fotos (Google Takeout `.zip`)** y **carpetas de fotos/vídeos sin comprimir** contra tu biblioteca de **iCloud Photos**, detectando qué años y meses te faltan y subiéndolos por tandas con su fecha original restaurada.
+
+#### Ventajas clave:
+- **No necesitas descomprimir cientos de GB:** Lee la tabla de contenidos de los `.zip` en tu NAS vía red local y solo extrae lo necesario.
+- **Cero Borrados:** 100% Solo Lectura en origen.
+- **Compatible con "Optimizar almacenamiento":** No requiere descargar las fotos que ya tienes en iCloud.
+- **Restauración de fechas reales:** Cruza metadatos con el `.json` de Google Takeout y el EXIF original mediante `exiftool`.
+- **Conversión de vídeo VP9:** Transcodifica vídeos Google VP9 a H.264 con `ffmpeg` para evitar errores en Apple Photos.
+- **Gestión de memoria:** Reinicia el puente de AppleScript periódicamente para evitar fallos de memoria (`AE.framework`) en lotes masivos.
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, and feature requests are welcome! Feel free to open an issue or submit a pull request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
