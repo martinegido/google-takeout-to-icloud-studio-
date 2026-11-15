@@ -197,9 +197,25 @@ def _apply_metadata_batch(staged_items: List[Dict[str, Any]]) -> None:
                 pass
 
 
-def _import_files_to_photos_app(file_paths: List[str], album_name: str) -> None:
+def _restart_photos_app() -> None:
+    """
+    Cleanly closes and restarts Apple Photos to flush macOS AppleEvents sandbox extension
+    tokens (preventing error '[12: Cannot allocate memory]' during large batch imports).
+    """
+    try:
+        subprocess.run(["osascript", "-e", 'tell application "Photos" to quit'], capture_output=True, timeout=5)
+    except Exception:
+        pass
+    time.sleep(1.0)
+    subprocess.run(["killall", "Photos"], capture_output=True)
+    time.sleep(1.5)
+    subprocess.run(["open", "-a", "Photos"], capture_output=True)
+    time.sleep(2.5)
+
+
+def _import_files_to_photos_app(file_paths: List[str], album_name: str, retry_count: int = 1) -> int:
     if not file_paths:
-        return
+        return 0
 
     posix_list_items = []
     for p in file_paths:
@@ -216,7 +232,8 @@ def _import_files_to_photos_app(file_paths: List[str], album_name: str) -> None:
         end if
         set targetAlbum to album "{escaped_album}"
         with timeout of 600 seconds
-            import {applescript_list} into targetAlbum skip check duplicates false
+            set importedItems to import {applescript_list} into targetAlbum skip check duplicates true
+            return count of importedItems
         end timeout
     end tell
     """
@@ -225,8 +242,19 @@ def _import_files_to_photos_app(file_paths: List[str], album_name: str) -> None:
         capture_output=True,
         text=True,
     )
+    imported_count = 0
+    if proc.returncode == 0 and proc.stdout.strip().isdigit():
+        imported_count = int(proc.stdout.strip())
+
+    if (proc.returncode != 0 or imported_count == 0) and retry_count > 0:
+        # Recycle Photos.app to clear AppleEvents sandbox limits
+        _restart_photos_app()
+        return _import_files_to_photos_app(file_paths, album_name, retry_count=retry_count - 1)
+
     if proc.returncode != 0:
         raise RuntimeError(f"Error al importar en la app Fotos: {proc.stderr.strip()}")
+
+    return imported_count
 
 
 def run_batch(
@@ -411,13 +439,21 @@ def run_batch(
         if staged_ok:
             _apply_metadata_batch(staged_ok)
 
+        # Proactively restart Photos every 250 items to keep sandbox tokens fresh
+        if mode == "import_photos_app" and processed > 0 and processed % 250 == 0:
+            if progress_cb:
+                progress_cb(processed, total, "Optimizando memoria y refrescando app Fotos...")
+            _restart_photos_app()
+
         # 3. If mode is 'import_photos_app', send this sub-chunk to macOS Photos.app
         if mode == "import_photos_app" and staged_ok:
             import_msg = f"Importando {len(staged_ok)} archivos en la app Fotos de macOS (Álbum: {album_name})..."
             if progress_cb:
                 progress_cb(processed, total, import_msg)
             try:
-                _import_files_to_photos_app([x["dest_path"] for x in staged_ok], album_name)
+                imported_num = _import_files_to_photos_app([x["dest_path"] for x in staged_ok], album_name)
+                if imported_num == 0 and len(staged_ok) > 0:
+                    raise RuntimeError("Fotos.app no devolvió elementos importados.")
                 new_status = "imported"
             except Exception as e:
                 for x in staged_ok:
