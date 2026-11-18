@@ -37,9 +37,10 @@ VIDEO_EXTENSIONS = {
 
 ALL_MEDIA_EXTENSIONS = PHOTO_EXTENSIONS | VIDEO_EXTENSIONS
 
-# Common Google Takeout suffix patterns added to edited or duplicate files
+# Common Google Takeout suffix patterns added to edited or duplicate files,
+# as well as batch processor import ID suffixes like _14162
 EDITED_SUFFIX_RE = re.compile(
-    r"(-ha editado|-editado|-edited|-modifié|-bearbeitet|-수정됨|\(\d+\))$",
+    r"(-ha editado|-editado|-edited|-modifié|-bearbeitet|-수정됨|\(\d+\)|_\d{1,6})$",
     re.IGNORECASE,
 )
 

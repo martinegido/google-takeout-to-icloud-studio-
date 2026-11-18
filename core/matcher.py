@@ -1,3 +1,4 @@
+import re
 import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -18,13 +19,13 @@ def run_matching(
     conn = get_connection()
     try:
         icloud_rows = conn.execute(
-            "SELECT uuid, norm_name, stem, ext, timestamp, year_month, kind, filesize FROM icloud_assets"
+            "SELECT uuid, norm_name, stem, ext, timestamp, year_month, year, kind, filesize FROM icloud_assets"
         ).fetchall()
 
         takeout_rows = conn.execute(
             """
             SELECT id, unique_key, inner_path, filename, norm_name, stem, ext,
-                   timestamp, year_month, year, month, kind, filesize, status
+                   timestamp, date_source, year_month, year, month, kind, filesize, status
             FROM takeout_assets
             ORDER BY
                 -- Prefer "Photos from YYYY" / "Fotos de YYYY" canonical folders over album folders when deduplicating
@@ -72,6 +73,7 @@ def run_matching(
         norm_name = tr["norm_name"]
         stem = tr["stem"]
         ts = tr["timestamp"] or 0
+        d_source = tr["date_source"] or ""
         ym = tr["year_month"]
         kind = tr["kind"]
         fsize = tr["filesize"] or 0
@@ -99,20 +101,35 @@ def run_matching(
         matched_uuid = None
         match_reason = None
 
-        # Rule 1: Exact normalized filename match (within ±48h if both have timestamps, or same filesize)
+        # Check if stem is a globally unique identifier (UUID / long hash)
+        is_unique_hash = bool(
+            re.search(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}", stem, re.I)
+            or (len(stem) >= 24 and not stem.startswith("img_") and not stem.startswith("vid_"))
+        )
+
+        # Rule 1: Exact normalized filename match (within ±48h if both have timestamps, or same filesize, or UUID)
         if norm_name in by_norm_name:
             for ic in by_norm_name[norm_name]:
                 ic_ts = ic["timestamp"] or 0
+                ic_fsize = ic["filesize"] or 0
+                if is_unique_hash:
+                    matched_uuid = ic["uuid"]
+                    match_reason = "Identificador único (UUID) ya presente en iCloud"
+                    break
                 if ts > 0 and ic_ts > 0:
                     if abs(ts - ic_ts) <= 172800:  # 48 hours tolerance for timezone offsets
                         matched_uuid = ic["uuid"]
                         match_reason = "Mismo nombre y fecha en iCloud"
                         break
-                elif fsize > 0 and ic["filesize"] == fsize:
+                    elif d_source in ("carpeta/nombre", "fallback") and (tr["year"] == ic["year"] or abs(ts - ic_ts) <= 31536000):
+                        matched_uuid = ic["uuid"]
+                        match_reason = "Mismo nombre y año en iCloud (fecha estimada en Takeout)"
+                        break
+                if fsize > 0 and ic_fsize > 0 and (ic_fsize == fsize or abs(fsize - ic_fsize) / max(fsize, ic_fsize) <= 0.20):
                     matched_uuid = ic["uuid"]
-                    match_reason = "Mismo nombre y tamaño exacto en iCloud"
+                    match_reason = "Mismo nombre y tamaño similar en iCloud"
                     break
-                elif ts == 0 or ic_ts == 0:
+                if ts == 0 or ic_ts == 0 or d_source in ("carpeta/nombre", "fallback"):
                     matched_uuid = ic["uuid"]
                     match_reason = "Mismo nombre de archivo en iCloud"
                     break
@@ -121,6 +138,10 @@ def run_matching(
         if not matched_uuid and stem in by_stem and len(stem) >= 4:
             for ic in by_stem[stem]:
                 ic_ts = ic["timestamp"] or 0
+                if is_unique_hash:
+                    matched_uuid = ic["uuid"]
+                    match_reason = "Identificador único (UUID) ya presente en iCloud"
+                    break
                 if ts > 0 and ic_ts > 0 and abs(ts - ic_ts) <= 129600:  # 36 hours
                     if ic["kind"] == kind:
                         matched_uuid = ic["uuid"]
@@ -131,6 +152,10 @@ def run_matching(
                         matched_uuid = ic["uuid"]
                         match_reason = "Clip de Live Photo cuya foto ya está en iCloud"
                         break
+                elif d_source in ("carpeta/nombre", "fallback") and ic["kind"] == kind:
+                    matched_uuid = ic["uuid"]
+                    match_reason = f"Mismo archivo ({ic['ext']} vs {tr['ext']}) en iCloud"
+                    break
 
         # Rule 3: Exact capture timestamp (±2 seconds) + same media kind in the same Year-Month
         if not matched_uuid and ts > 0 and ym != "Sin-Fecha":
