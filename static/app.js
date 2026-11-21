@@ -669,7 +669,31 @@ function switchTab(tabId, btnEl) {
 }
 
 // ==================== GEOTAGGING TAB LOGIC ====================
+let geoMap = null;
+let geoMarkersLayer = null;
+let geoCurrentMatches = [];
+const geoSelectedIds = new Set();
+
+function initGeoMap() {
+  if (geoMap) {
+    setTimeout(() => geoMap.invalidateSize(), 200);
+    return;
+  }
+  const mapEl = document.getElementById("geotag-map");
+  if (!mapEl || typeof L === "undefined") return;
+
+  // Initialize Leaflet map centered in Europe / Spain by default
+  geoMap = L.map("geotag-map").setView([40.4168, -3.7038], 5);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap contributors"
+  }).addTo(geoMap);
+
+  geoMarkersLayer = L.featureGroup().addTo(geoMap);
+}
+
 async function loadGeotagOverview() {
+  initGeoMap();
   try {
     const res = await fetch("/api/geotag/overview");
     if (!res.ok) return;
@@ -699,22 +723,38 @@ async function loadGeotagOverview() {
       const pct = icTotal > 0 ? ((data.icloud_with_gps / icTotal) * 100).toFixed(0) : "0";
       elIcSub.textContent = `✓ ${(data.icloud_with_gps || 0).toLocaleString()} con ubicación real (${pct}%)`;
     }
+
+    // Populate months dropdown
+    const ymSelect = document.getElementById("geo-ym-select");
+    if (ymSelect && data.available_months) {
+      const currentVal = ymSelect.value;
+      const opts = ['<option value="ALL">Todos los periodos (Global)</option>'];
+      data.available_months.forEach(m => {
+        opts.push(`<option value="${m.ym}">${m.ym} (${m.total} fotos sin GPS)</option>`);
+      });
+      ymSelect.innerHTML = opts.join("");
+      if (currentVal && Array.from(ymSelect.options).some(o => o.value === currentVal)) {
+        ymSelect.value = currentVal;
+      }
+    }
   } catch (e) {
     console.error("Error loading geotag overview:", e);
   }
 }
 
 async function runGeotagSimulation() {
+  initGeoMap();
   const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
   const scope = document.getElementById("geo-scope-select").value || "both";
+  const filterYm = document.getElementById("geo-ym-select") ? document.getElementById("geo-ym-select").value : "ALL";
   const tbody = document.getElementById("geo-preview-table-body");
-  tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #38bdf8;"><span class="spinner"></span> Calculando correlación espacial y temporal entre fotos...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #38bdf8;"><span class="spinner"></span> Calculando correlación espacial y temporal entre fotos...</td></tr>`;
 
   try {
     const res = await fetch("/api/geotag/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ window_minutes: windowMins, scope: scope })
+      body: JSON.stringify({ window_minutes: windowMins, scope: scope, filter_ym: filterYm })
     });
     if (!res.ok) throw new Error("Error en la simulación");
     const data = await res.json();
@@ -724,52 +764,197 @@ async function runGeotagSimulation() {
 
     let desc = "";
     if (scope === "both" || scope === "takeout") {
-      desc += `<strong>Takeout / Carpetas:</strong> ${data.takeout_matchable.toLocaleString()} de ${data.takeout_total.toLocaleString()} fotos pueden geolocalizarse. `;
+      desc += `<strong>Takeout / Carpetas:</strong> ${data.takeout_matchable.toLocaleString()} de ${data.takeout_total.toLocaleString()} fotos tienen coincidencia GPS. `;
     }
     if (scope === "both" || scope === "icloud") {
       desc += `<br><strong>Apple Fotos (Mac):</strong> ${data.icloud_matchable.toLocaleString()} de ${data.icloud_total.toLocaleString()} fotos sin ubicación pueden situarse en el mapa.`;
     }
     document.getElementById("geo-sim-desc").innerHTML = desc;
 
-    document.getElementById("geo-preview-count").textContent = `${(data.sample_matches || []).length} ejemplos mostrados`;
+    geoCurrentMatches = data.sample_matches || [];
+    geoSelectedIds.clear();
 
-    if (!data.sample_matches || data.sample_matches.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #f59e0b;">No se encontraron fotos sin GPS en este rango temporal (prueba a ampliar a ±60 min o ±120 min).</td></tr>`;
+    // Reset markers on map
+    if (geoMarkersLayer) geoMarkersLayer.clearLayers();
+
+    if (geoCurrentMatches.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #f59e0b;">No se encontraron fotos sin GPS en este rango temporal (prueba a ampliar a ±60 min o cambiar de mes).</td></tr>`;
+      document.getElementById("geo-preview-count").textContent = "0 ejemplos";
+      updateGeoSelectionCounts();
       return;
     }
 
-    tbody.innerHTML = data.sample_matches.map(m => `
-      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem;">
-        <td style="padding: 10px; font-weight: 500;">${escapeHtml(m.filename)}</td>
-        <td style="padding: 10px; color: #94a3b8;">${m.date_str}</td>
-        <td style="padding: 10px;">
-          <a href="https://www.google.com/maps?q=${m.assigned_lat},${m.assigned_lon}" target="_blank" style="color: #38bdf8; text-decoration: underline;" title="Ver en Google Maps">
-            📍 ${m.assigned_lat.toFixed(4)}, ${m.assigned_lon.toFixed(4)}
-          </a>
-        </td>
-        <td style="padding: 10px;"><span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399;">±${m.delta_min} min</span></td>
-        <td style="padding: 10px; color: #cbd5e1;"><small>${escapeHtml(m.desc)}</small></td>
-        <td style="padding: 10px;"><span class="badge">${m.target_scope}</span></td>
-      </tr>
-    `).join("");
+    document.getElementById("geo-preview-count").textContent = `${geoCurrentMatches.length} fotos detectadas`;
+
+    // Add markers to map and pre-select all
+    const mapBounds = [];
+    geoCurrentMatches.forEach((m, idx) => {
+      geoSelectedIds.add(m.target_id);
+
+      if (geoMarkersLayer && typeof L !== "undefined") {
+        const marker = L.marker([m.assigned_lat, m.assigned_lon]);
+        const thumbHtml = m.thumb_url ? `<img src="${m.thumb_url}" style="width:100px;height:70px;object-fit:cover;border-radius:4px;display:block;margin-bottom:6px;" />` : "";
+        marker.bindPopup(`
+          <div style="font-size:12px; max-width:220px; color:#0f172a;">
+            ${thumbHtml}
+            <strong>${escapeHtml(m.filename)}</strong><br>
+            📅 ${m.date_str}<br>
+            <span style="color:#059669; font-weight:600;">±${m.delta_min} min</span> (${escapeHtml(m.method)})<br>
+            <small style="color:#64748b;">Ref: ${escapeHtml(m.ref_file)}</small>
+          </div>
+        `);
+        geoMarkersLayer.addLayer(marker);
+        m._marker = marker;
+        mapBounds.push([m.assigned_lat, m.assigned_lon]);
+      }
+    });
+
+    if (geoMap && mapBounds.length > 0) {
+      geoMap.fitBounds(mapBounds, { padding: [30, 30], maxZoom: 15 });
+    }
+
+    document.getElementById("geo-select-all").checked = true;
+    renderGeoTable();
+    updateGeoSelectionCounts();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #ef4444;">Error ejecutando la simulación: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #ef4444;">Error ejecutando la simulación: ${e.message}</td></tr>`;
   }
 }
 
-async function applyGeotagTakeout() {
+function renderGeoTable() {
+  const tbody = document.getElementById("geo-preview-table-body");
+  if (!tbody || geoCurrentMatches.length === 0) return;
+
+  tbody.innerHTML = geoCurrentMatches.map((m, idx) => {
+    const isChecked = geoSelectedIds.has(m.target_id);
+    const thumbEl = m.thumb_url
+      ? `<img src="${m.thumb_url}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;" />`
+      : `<span style="font-size:24px;">📷</span>`;
+
+    return `
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.88rem; ${isChecked ? "" : "opacity: 0.5;"}" id="geo-row-${idx}">
+        <td style="padding: 8px 10px; text-align: center;">
+          <input type="checkbox" ${isChecked ? "checked" : ""} onchange="toggleGeoItem('${m.target_id}', this.checked, ${idx})" />
+        </td>
+        <td style="padding: 6px 10px;">${thumbEl}</td>
+        <td style="padding: 8px 10px; font-weight: 500;">
+          <a href="javascript:void(0)" onclick="focusGeoOnMap(${idx})" style="color:#f8fafc; text-decoration:none;" title="Ver en el mapa">
+            ${escapeHtml(m.filename)}
+          </a>
+        </td>
+        <td style="padding: 8px 10px; color: #94a3b8; white-space: nowrap;">${m.date_str}</td>
+        <td style="padding: 8px 10px;">
+          <a href="https://www.google.com/maps?q=${m.assigned_lat},${m.assigned_lon}" target="_blank" style="color: #38bdf8; text-decoration: underline;" title="Abrir en Google Maps">
+            📍 ${m.assigned_lat.toFixed(4)}, ${m.assigned_lon.toFixed(4)}
+          </a>
+        </td>
+        <td style="padding: 8px 10px;"><span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399;">±${m.delta_min} min</span></td>
+        <td style="padding: 8px 10px; color: #cbd5e1;"><small>${escapeHtml(m.desc)}</small></td>
+        <td style="padding: 8px 10px;"><span class="badge">${m.target_scope}</span></td>
+        <td style="padding: 8px 10px; text-align: center;">
+          <button class="btn btn-outline btn-sm" onclick="focusGeoOnMap(${idx})" title="Centrar en el mapa" style="padding: 2px 8px; font-size: 11px;">
+            🗺️ Ver
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function toggleGeoItem(targetId, isChecked, idx) {
+  if (isChecked) {
+    geoSelectedIds.add(targetId);
+  } else {
+    geoSelectedIds.delete(targetId);
+  }
+  const row = document.getElementById(`geo-row-${idx}`);
+  if (row) row.style.opacity = isChecked ? "1" : "0.5";
+  updateGeoSelectionCounts();
+}
+
+function toggleSelectAllGeo(isChecked) {
+  if (isChecked) {
+    geoCurrentMatches.forEach(m => geoSelectedIds.add(m.target_id));
+  } else {
+    geoSelectedIds.clear();
+  }
+  renderGeoTable();
+  updateGeoSelectionCounts();
+}
+
+function updateGeoSelectionCounts() {
+  const batchLimit = parseInt(document.getElementById("geo-batch-limit") ? document.getElementById("geo-batch-limit").value : "0", 10) || 0;
+  let toCount = 0;
+  let icCount = 0;
+  geoCurrentMatches.forEach(m => {
+    if (geoSelectedIds.has(m.target_id)) {
+      if (m.id_type === "takeout_id") toCount++;
+      else icCount++;
+    }
+  });
+
+  const effectiveTo = (batchLimit > 0 && toCount > batchLimit) ? batchLimit : toCount;
+  const effectiveIc = (batchLimit > 0 && icCount > batchLimit) ? batchLimit : icCount;
+
+  const elTo = document.getElementById("geo-sel-to-count");
+  const elIc = document.getElementById("geo-sel-ic-count");
+  if (elTo) elTo.textContent = batchLimit > 0 && toCount > batchLimit ? `${effectiveTo} de ${toCount}` : toCount.toLocaleString();
+  if (elIc) elIc.textContent = batchLimit > 0 && icCount > batchLimit ? `${effectiveIc} de ${icCount}` : icCount.toLocaleString();
+
+  const btnTo = document.getElementById("btn-apply-geo-takeout");
+  const btnIc = document.getElementById("btn-apply-geo-photos");
+  if (btnTo) btnTo.disabled = toCount === 0;
+  if (btnIc) btnIc.disabled = icCount === 0;
+}
+
+function focusGeoOnMap(idx) {
+  const m = geoCurrentMatches[idx];
+  if (!m || !geoMap) return;
+  geoMap.setView([m.assigned_lat, m.assigned_lon], 16, { animate: true });
+  if (m._marker) {
+    m._marker.openPopup();
+  }
+  const mapEl = document.getElementById("geotag-map");
+  if (mapEl) mapEl.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function applyGeotagTakeout(onlySelected = true) {
   const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
-  if (!confirm(`¿Deseas asignar ubicación por proximidad temporal (margen ±${windowMins} min) a las fotos pendientes de Takeout / Carpetas?\n\nAl procesar las tandas, ExifTool grabará estas coordenadas en los archivos para que entren con mapa en Apple Fotos.`)) {
+  const filterYm = document.getElementById("geo-ym-select") ? document.getElementById("geo-ym-select").value : "ALL";
+  const batchLimit = parseInt(document.getElementById("geo-batch-limit") ? document.getElementById("geo-batch-limit").value : "0", 10) || 0;
+
+  let selectedRawIds = [];
+  if (onlySelected) {
+    selectedRawIds = geoCurrentMatches
+      .filter(m => m.id_type === "takeout_id" && geoSelectedIds.has(m.target_id))
+      .map(m => m.raw_id);
+    if (selectedRawIds.length === 0) {
+      alert("No has seleccionado ninguna foto de Takeout / Carpetas.");
+      return;
+    }
+    if (batchLimit > 0 && selectedRawIds.length > batchLimit) {
+      selectedRawIds = selectedRawIds.slice(0, batchLimit);
+    }
+  }
+
+  const countMsg = onlySelected ? `este lote de ${selectedRawIds.length} fotos seleccionadas` : "todas las fotos pendientes";
+  if (!confirm(`¿Deseas asignar ubicación a ${countMsg} de Takeout / Carpetas?\n\nAl procesar tus tandas, ExifTool grabará estas coordenadas en los metadatos para que se suban geolocalizadas a Apple Fotos.`)) {
     return;
   }
+
   try {
     const res = await fetch("/api/geotag/apply-takeout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ window_minutes: windowMins })
+      body: JSON.stringify({
+        window_minutes: windowMins,
+        target_ids: onlySelected ? selectedRawIds : null,
+        filter_ym: filterYm !== "ALL" ? filterYm : null,
+        batch_limit: batchLimit
+      })
     });
     const data = await res.json();
-    alert(`¡Hecho! Se han geolocalizado ${data.updated_count.toLocaleString()} fotos en Takeout / Carpetas. Cuando las importes, se subirán con estas coordenadas.`);
+    alert(`¡Hecho! Se han geolocalizado ${data.updated_count.toLocaleString()} fotos en Takeout / Carpetas.`);
     await loadGeotagOverview();
     runGeotagSimulation();
   } catch (e) {
@@ -777,16 +962,40 @@ async function applyGeotagTakeout() {
   }
 }
 
-async function applyGeotagPhotosApp() {
+async function applyGeotagPhotosApp(onlySelected = true) {
   const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
-  if (!confirm(`¿Deseas asignar ubicación a las fotos que YA están dentro de la app Fotos de Apple en tu Mac (margen ±${windowMins} min)?\n\nEl sistema usará la automatización oficial de Photos.app para situarlas en el mapa.`)) {
+  const filterYm = document.getElementById("geo-ym-select") ? document.getElementById("geo-ym-select").value : "ALL";
+  const batchLimit = parseInt(document.getElementById("geo-batch-limit") ? document.getElementById("geo-batch-limit").value : "0", 10) || 0;
+
+  let selectedUuids = [];
+  if (onlySelected) {
+    selectedUuids = geoCurrentMatches
+      .filter(m => m.id_type === "icloud_uuid" && geoSelectedIds.has(m.target_id))
+      .map(m => m.raw_id);
+    if (selectedUuids.length === 0) {
+      alert("No has seleccionado ninguna foto de Apple Fotos.");
+      return;
+    }
+    if (batchLimit > 0 && selectedUuids.length > batchLimit) {
+      selectedUuids = selectedUuids.slice(0, batchLimit);
+    }
+  }
+
+  const countMsg = onlySelected ? `este lote de ${selectedUuids.length} fotos seleccionadas` : "todas las fotos de Apple Fotos";
+  if (!confirm(`¿Deseas asignar ubicación a ${countMsg} directamente en tu app Fotos de Apple?\n\nEl sistema usará la automatización oficial de macOS para situarlas en el mapa.`)) {
     return;
   }
+
   try {
     const res = await fetch("/api/geotag/apply-photos-app", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ window_minutes: windowMins })
+      body: JSON.stringify({
+        window_minutes: windowMins,
+        target_uuids: onlySelected ? selectedUuids : null,
+        filter_ym: filterYm !== "ALL" ? filterYm : null,
+        batch_limit: batchLimit
+      })
     });
     if (!res.ok) throw new Error("No se pudo iniciar el proceso");
     alert("¡Proceso iniciado en segundo plano! Puedes seguir el progreso en la barra superior.");

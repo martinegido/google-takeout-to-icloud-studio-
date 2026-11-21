@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sincronizador Google Fotos ➔ iCloud</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <script src="/vendor/leaflet/leaflet.js"></script>
 </head>
 <body>
   <!-- Header -->
@@ -364,6 +366,12 @@
         <!-- Configuration Bar -->
         <div class="batch-launch-bar" style="background: var(--card-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
           <div class="form-group" style="min-width: 220px;">
+            <label for="geo-ym-select">Filtrar por Periodo / Viaje:</label>
+            <select id="geo-ym-select" class="form-control" onchange="runGeotagSimulation()">
+              <option value="ALL">Todos los periodos (Global)</option>
+            </select>
+          </div>
+          <div class="form-group" style="min-width: 200px;">
             <label for="geo-window-select">Margen de tiempo (tolerancia):</label>
             <select id="geo-window-select" class="form-control" onchange="runGeotagSimulation()">
               <option value="15">±15 minutos (Máxima precisión)</option>
@@ -373,19 +381,40 @@
               <option value="120">±120 minutos (2 horas - Amplio)</option>
             </select>
           </div>
-          <div class="form-group" style="min-width: 220px;">
+          <div class="form-group" style="min-width: 200px;">
             <label for="geo-scope-select">Ámbito a analizar:</label>
             <select id="geo-scope-select" class="form-control" onchange="runGeotagSimulation()">
-              <option value="both" selected>Ambos (Takeout/Carpetas y Apple Fotos)</option>
-              <option value="takeout">Solo Takeout / Carpetas pendientes</option>
-              <option value="icloud">Solo Fotos ya en Apple Fotos</option>
+              <option value="both" selected>Ambos (Takeout y Apple Fotos)</option>
+              <option value="takeout">Solo Takeout / Carpetas</option>
+              <option value="icloud">Solo Apple Fotos</option>
+            </select>
+          </div>
+          <div class="form-group" style="min-width: 190px;">
+            <label for="geo-batch-limit">Tamaño de lote (por tanda):</label>
+            <select id="geo-batch-limit" class="form-control" onchange="updateGeoSelectionCounts()">
+              <option value="25">25 fotos (Prueba segura)</option>
+              <option value="50" selected>50 fotos (Recomendado)</option>
+              <option value="100">100 fotos</option>
+              <option value="250">250 fotos</option>
+              <option value="0">Todas las seleccionadas</option>
             </select>
           </div>
           <div style="display: flex; gap: 10px; align-items: flex-end;">
-            <button class="btn btn-secondary" onclick="runGeotagSimulation()">
-              🔍 Simular y Comprobar
+            <button class="btn btn-primary" onclick="runGeotagSimulation()">
+              🔍 Simular y Previsualizar
             </button>
           </div>
+        </div>
+
+        <!-- Interactive Map Container -->
+        <div id="geo-map-panel" style="margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin: 0;">🗺️ Mapa Visual de Posicionamiento</h3>
+            <span id="geo-map-status" style="font-size: 0.85rem; color: #94a3b8;">
+              Haz clic en cualquier punto del mapa para ver la foto y su correlación
+            </span>
+          </div>
+          <div id="geotag-map" style="height: 380px; width: 100%; border-radius: 8px; border: 1px solid var(--border-color); background: #1e293b; z-index: 1;"></div>
         </div>
 
         <!-- Simulation Result Box -->
@@ -396,37 +425,51 @@
               <p id="geo-sim-desc" style="margin: 0; font-size: 0.95rem; color: #cbd5e1;"></p>
             </div>
             <div class="btn-group">
-              <button id="btn-apply-geo-takeout" class="btn btn-primary" onclick="applyGeotagTakeout()">
-                📌 Aplicar a Takeout / Carpetas
+              <button id="btn-apply-geo-takeout" class="btn btn-primary" onclick="applyGeotagTakeout(true)">
+                📌 Aplicar a Seleccionadas de Takeout (<span id="geo-sel-to-count">0</span>)
               </button>
-              <button id="btn-apply-geo-photos" class="btn btn-success" onclick="applyGeotagPhotosApp()">
-                🍏 Asignar a Fotos en Apple Fotos
+              <button id="btn-apply-geo-photos" class="btn btn-success" onclick="applyGeotagPhotosApp(true)">
+                🍏 Asignar a Seleccionadas de Apple Fotos (<span id="geo-sel-ic-count">0</span>)
               </button>
             </div>
           </div>
         </div>
 
         <!-- Preview Table -->
-        <div class="panel-header" style="margin-top: 10px;">
-          <h3>Vista Previa de Coincidencias Geográficas Detectadas</h3>
-          <span id="geo-preview-count" class="badge">0 ejemplos</span>
+        <div class="panel-header" style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h3 style="margin:0">Fotos Detectadas para Geolocalizar</h3>
+            <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #94a3b8;">
+              Puedes desmarcar las fotos que no quieras tocar. Solo se aplicarán cambios a las que tengan la casilla marcada.
+            </p>
+          </div>
+          <div style="display:flex; align-items:center; gap: 12px;">
+            <label style="display:flex; align-items:center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+              <input type="checkbox" id="geo-select-all" checked onchange="toggleSelectAllGeo(this.checked)" />
+              <strong>Seleccionar todas</strong>
+            </label>
+            <span id="geo-preview-count" class="badge">0 ejemplos</span>
+          </div>
         </div>
-        <div style="overflow-x: auto;">
+        <div style="overflow-x: auto; max-height: 480px;">
           <table class="data-table" style="width: 100%; border-collapse: collapse;">
             <thead>
-              <tr style="text-align: left; border-bottom: 1px solid var(--border-color);">
+              <tr style="text-align: left; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; background: var(--card-bg); z-index: 2;">
+                <th style="padding: 10px; width: 40px;"></th>
+                <th style="padding: 10px; width: 60px;">Foto</th>
                 <th style="padding: 10px;">Archivo sin GPS</th>
                 <th style="padding: 10px;">Fecha y Hora</th>
                 <th style="padding: 10px;">Ubicación Calculada</th>
                 <th style="padding: 10px;">Margen</th>
-                <th style="padding: 10px;">Método y Foto de Referencia</th>
+                <th style="padding: 10px;">Método y Referencia</th>
                 <th style="padding: 10px;">Destino</th>
+                <th style="padding: 10px; width: 60px;">Mapa</th>
               </tr>
             </thead>
             <tbody id="geo-preview-table-body">
               <tr>
-                <td colspan="6" style="padding: 20px; text-align: center; color: #94a3b8;">
-                  Haz clic en <strong>«🔍 Simular y Comprobar»</strong> para ver los cálculos en tiempo real.
+                <td colspan="9" style="padding: 20px; text-align: center; color: #94a3b8;">
+                  Haz clic en <strong>«🔍 Simular y Previsualizar»</strong> para cargar el mapa y las fotos.
                 </td>
               </tr>
             </tbody>

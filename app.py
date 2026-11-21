@@ -507,24 +507,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
             from core.geotag import simulate_geotag
             scope = body.get("scope", "both")
             window_minutes = int(body.get("window_minutes", 45))
-            res = simulate_geotag(scope=scope, window_minutes=window_minutes)
+            filter_ym = body.get("filter_ym", "ALL")
+            res = simulate_geotag(scope=scope, window_minutes=window_minutes, filter_ym=filter_ym)
             self._send_json(res)
             return
 
         if path == "/api/geotag/apply-takeout":
             from core.geotag import apply_geotag_takeout
             window_minutes = int(body.get("window_minutes", 45))
-            res = apply_geotag_takeout(window_minutes=window_minutes)
+            target_ids = body.get("target_ids")
+            filter_ym = body.get("filter_ym")
+            batch_limit = int(body.get("batch_limit", 0))
+            res = apply_geotag_takeout(
+                window_minutes=window_minutes,
+                target_ids=target_ids,
+                filter_ym=filter_ym,
+                batch_limit=batch_limit,
+            )
             self._send_json(res)
             return
 
         if path == "/api/geotag/apply-photos-app":
             from core.geotag import apply_geotag_photos_app
             window_minutes = int(body.get("window_minutes", 45))
+            target_uuids = body.get("target_uuids")
+            filter_ym = body.get("filter_ym")
+            batch_limit = int(body.get("batch_limit", 0))
             if not _start_background_job(
                 "geotag_photos_app",
                 apply_geotag_photos_app,
                 window_minutes=window_minutes,
+                target_uuids=target_uuids,
+                filter_ym=filter_ym,
+                batch_limit=batch_limit,
                 progress_cb=_progress_cb,
                 should_stop=_should_pause_or_stop,
             ):

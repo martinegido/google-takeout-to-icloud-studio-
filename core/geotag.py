@@ -12,7 +12,7 @@ from core.database import get_connection
 def get_geotag_overview() -> Dict[str, Any]:
     """
     Returns summary metrics of assets with and without GPS coordinates
-    in both Google Takeout / folders and iCloud Photos.
+    in both Google Takeout / folders and iCloud Photos, plus list of available months.
     """
     conn = get_connection()
     try:
@@ -36,6 +36,37 @@ def get_geotag_overview() -> Dict[str, Any]:
             "SELECT COUNT(*) FROM icloud_assets WHERE gps_inferred = 1"
         ).fetchone()[0]
 
+        # Gather distinct months that contain photos without GPS
+        months_dict: Dict[str, Dict[str, int]] = {}
+        for r in conn.execute(
+            """
+            SELECT year_month, COUNT(*) FROM takeout_assets
+            WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month != 'Sin-Fecha'
+            GROUP BY year_month
+            """
+        ).fetchall():
+            ym, cnt = r[0], r[1]
+            if ym not in months_dict:
+                months_dict[ym] = {"takeout": 0, "icloud": 0}
+            months_dict[ym]["takeout"] = cnt
+
+        for r in conn.execute(
+            """
+            SELECT year_month, COUNT(*) FROM icloud_assets
+            WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month != 'Sin-Fecha'
+            GROUP BY year_month
+            """
+        ).fetchall():
+            ym, cnt = r[0], r[1]
+            if ym not in months_dict:
+                months_dict[ym] = {"takeout": 0, "icloud": 0}
+            months_dict[ym]["icloud"] = cnt
+
+        available_months = [
+            {"ym": k, "takeout": v["takeout"], "icloud": v["icloud"], "total": v["takeout"] + v["icloud"]}
+            for k, v in sorted(months_dict.items(), key=lambda x: x[0], reverse=True)
+        ]
+
         total_anchors = to_with + ic_with
     finally:
         conn.close()
@@ -48,6 +79,7 @@ def get_geotag_overview() -> Dict[str, Any]:
         "icloud_without_gps": ic_without,
         "icloud_inferred": ic_inferred,
         "total_gps_anchors": total_anchors,
+        "available_months": available_months,
     }
 
 
@@ -81,7 +113,6 @@ def _build_gps_timeline() -> Tuple[List[int], List[Dict[str, Any]]]:
     last_ts = None
     for r in rows:
         ts = r[0]
-        # Skip duplicate points at the exact same second to keep binary search fast
         if ts == last_ts:
             continue
         last_ts = ts
@@ -160,10 +191,12 @@ def _interpolate_coords(
 def simulate_geotag(
     scope: str = "both",  # 'both', 'takeout', 'icloud'
     window_minutes: int = 45,
+    filter_ym: str = "ALL",
+    max_items: int = 300,
 ) -> Dict[str, Any]:
     """
     Simulates geotagging without saving any changes.
-    Returns preview metrics and sample matches.
+    Returns preview metrics, available months, and sample matches with full coordinates.
     """
     max_window_sec = window_minutes * 60
     times, points = _build_gps_timeline()
@@ -173,27 +206,49 @@ def simulate_geotag(
         takeout_candidates = []
         if scope in ("both", "takeout"):
             cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, filename, timestamp, year_month, kind
-                FROM takeout_assets
-                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
-                ORDER BY timestamp ASC
-                """
-            )
+            if filter_ym and filter_ym != "ALL":
+                cur.execute(
+                    """
+                    SELECT id, filename, timestamp, year_month, kind
+                    FROM takeout_assets
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                    ORDER BY timestamp ASC
+                    """,
+                    (filter_ym,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, filename, timestamp, year_month, kind
+                    FROM takeout_assets
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                    ORDER BY timestamp ASC
+                    """
+                )
             takeout_candidates = cur.fetchall()
 
         icloud_candidates = []
         if scope in ("both", "icloud"):
             cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT uuid, filename, timestamp, year_month, kind
-                FROM icloud_assets
-                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
-                ORDER BY timestamp ASC
-                """
-            )
+            if filter_ym and filter_ym != "ALL":
+                cur.execute(
+                    """
+                    SELECT uuid, filename, timestamp, year_month, kind
+                    FROM icloud_assets
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                    ORDER BY timestamp ASC
+                    """,
+                    (filter_ym,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT uuid, filename, timestamp, year_month, kind
+                    FROM icloud_assets
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                    ORDER BY timestamp ASC
+                    """
+                )
             icloud_candidates = cur.fetchall()
     finally:
         conn.close()
@@ -206,13 +261,17 @@ def simulate_geotag(
         res = _interpolate_coords(ts, times, points, max_window_sec)
         if res:
             matched_takeout += 1
-            if len(sample_matches) < 20:
+            if len(sample_matches) < max_items:
                 dt_str = datetime.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M:%S")
                 sample_matches.append(
                     {
                         "target_id": str(t_id),
+                        "id_type": "takeout_id",
+                        "raw_id": t_id,
                         "filename": fn,
                         "date_str": dt_str,
+                        "timestamp": ts,
+                        "year_month": ym,
                         "kind": kind,
                         "assigned_lat": res["lat"],
                         "assigned_lon": res["lon"],
@@ -221,6 +280,7 @@ def simulate_geotag(
                         "ref_file": res["ref_file"],
                         "desc": res["desc"],
                         "target_scope": "Takeout / Carpetas",
+                        "thumb_url": f"/api/thumbnail?id={t_id}" if kind == "photo" else None,
                     }
                 )
 
@@ -230,13 +290,17 @@ def simulate_geotag(
         res = _interpolate_coords(ts, times, points, max_window_sec)
         if res:
             matched_icloud += 1
-            if len(sample_matches) < 30:
+            if len(sample_matches) < max_items:
                 dt_str = datetime.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M:%S")
                 sample_matches.append(
                     {
                         "target_id": str(u_id),
+                        "id_type": "icloud_uuid",
+                        "raw_id": u_id,
                         "filename": fn,
                         "date_str": dt_str,
+                        "timestamp": ts,
+                        "year_month": ym,
                         "kind": kind,
                         "assigned_lat": res["lat"],
                         "assigned_lon": res["lon"],
@@ -245,11 +309,13 @@ def simulate_geotag(
                         "ref_file": res["ref_file"],
                         "desc": res["desc"],
                         "target_scope": "Apple Fotos (Mac)",
+                        "thumb_url": None,
                     }
                 )
 
     return {
         "window_minutes": window_minutes,
+        "filter_ym": filter_ym,
         "total_gps_anchors": len(points),
         "takeout_total": len(takeout_candidates),
         "takeout_matchable": matched_takeout,
@@ -259,7 +325,12 @@ def simulate_geotag(
     }
 
 
-def apply_geotag_takeout(window_minutes: int = 45) -> Dict[str, Any]:
+def apply_geotag_takeout(
+    window_minutes: int = 45,
+    target_ids: Optional[List[int]] = None,
+    filter_ym: Optional[str] = None,
+    batch_limit: int = 0,
+) -> Dict[str, Any]:
     """
     Applies interpolated GPS coordinates to takeout_assets in sync_state.db.
     Next time a batch is processed, ExifTool will write these coordinates to the files.
@@ -270,13 +341,33 @@ def apply_geotag_takeout(window_minutes: int = 45) -> Dict[str, Any]:
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, filename, timestamp
-            FROM takeout_assets
-            WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
-            """
-        )
+        if target_ids:
+            placeholders = ",".join("?" for _ in target_ids)
+            cur.execute(
+                f"""
+                SELECT id, filename, timestamp
+                FROM takeout_assets
+                WHERE id IN ({placeholders}) AND timestamp > 0
+                """,
+                target_ids,
+            )
+        elif filter_ym and filter_ym != "ALL":
+            cur.execute(
+                """
+                SELECT id, filename, timestamp
+                FROM takeout_assets
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                """,
+                (filter_ym,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, filename, timestamp
+                FROM takeout_assets
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                """
+            )
         items = cur.fetchall()
 
         updates = []
@@ -284,6 +375,9 @@ def apply_geotag_takeout(window_minutes: int = 45) -> Dict[str, Any]:
             res = _interpolate_coords(ts, times, points, max_window_sec)
             if res:
                 updates.append((res["lat"], res["lon"], 1, res["desc"], t_id))
+
+        if batch_limit > 0 and len(updates) > batch_limit:
+            updates = updates[:batch_limit]
 
         if updates:
             cur.executemany(
@@ -307,6 +401,9 @@ def apply_geotag_takeout(window_minutes: int = 45) -> Dict[str, Any]:
 
 def apply_geotag_photos_app(
     window_minutes: int = 45,
+    target_uuids: Optional[List[str]] = None,
+    filter_ym: Optional[str] = None,
+    batch_limit: int = 0,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
@@ -320,14 +417,35 @@ def apply_geotag_photos_app(
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT uuid, filename, timestamp
-            FROM icloud_assets
-            WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
-            ORDER BY timestamp ASC
-            """
-        )
+        if target_uuids:
+            placeholders = ",".join("?" for _ in target_uuids)
+            cur.execute(
+                f"""
+                SELECT uuid, filename, timestamp
+                FROM icloud_assets
+                WHERE uuid IN ({placeholders}) AND timestamp > 0
+                """,
+                target_uuids,
+            )
+        elif filter_ym and filter_ym != "ALL":
+            cur.execute(
+                """
+                SELECT uuid, filename, timestamp
+                FROM icloud_assets
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                ORDER BY timestamp ASC
+                """,
+                (filter_ym,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT uuid, filename, timestamp
+                FROM icloud_assets
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                ORDER BY timestamp ASC
+                """
+            )
         items = cur.fetchall()
     finally:
         conn.close()
@@ -346,6 +464,9 @@ def apply_geotag_photos_app(
                 }
             )
 
+    if batch_limit > 0 and len(candidates) > batch_limit:
+        candidates = candidates[:batch_limit]
+
     total = len(candidates)
     if total == 0:
         return {"status": "ok", "updated_count": 0, "message": "No se encontraron fotos candidatas."}
@@ -355,7 +476,6 @@ def apply_geotag_photos_app(
 
     chunk_size = 50
     updated_count = 0
-    now = time.time()
 
     conn = get_connection()
     try:
