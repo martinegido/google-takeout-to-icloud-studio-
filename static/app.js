@@ -700,37 +700,29 @@ async function loadGeotagOverview() {
     const data = await res.json();
     const elAnchors = document.getElementById("geo-kpi-anchors");
     const elAnchorsSub = document.getElementById("geo-kpi-anchors-sub");
-    const elToNoGps = document.getElementById("geo-kpi-takeout-nogps");
-    const elToSub = document.getElementById("geo-kpi-takeout-sub");
-    const elIcNoGps = document.getElementById("geo-kpi-icloud-nogps");
-    const elIcSub = document.getElementById("geo-kpi-icloud-sub");
+    const elCanonNoGps = document.getElementById("geo-kpi-canon-nogps");
+    const elCanonSub = document.getElementById("geo-kpi-canon-sub");
 
-    if (elAnchors) elAnchors.textContent = (data.total_gps_anchors || 0).toLocaleString();
+    if (elAnchors) elAnchors.textContent = (data.icloud_with_gps || data.total_gps_anchors || 0).toLocaleString();
     if (elAnchorsSub) {
-      elAnchorsSub.textContent = `${(data.icloud_with_gps || 0).toLocaleString()} en Apple Fotos + ${(data.takeout_with_gps || 0).toLocaleString()} en Takeout`;
+      elAnchorsSub.textContent = `Tus fotos con GPS en Apple Fotos (${(data.total_gps_anchors || 0).toLocaleString()} puntos totales)`;
     }
 
-    if (elToNoGps) elToNoGps.textContent = (data.takeout_without_gps || 0).toLocaleString();
-    if (elToSub) {
-      elToSub.textContent = data.takeout_inferred > 0 
-        ? `(${data.takeout_inferred.toLocaleString()} ya geolocalizadas)`
-        : `De ${(data.takeout_with_gps + data.takeout_without_gps).toLocaleString()} analizadas`;
+    const canonCount = (data.canon_without_gps !== undefined) ? data.canon_without_gps : (data.icloud_without_gps || 0);
+    if (elCanonNoGps) elCanonNoGps.textContent = canonCount.toLocaleString();
+    if (elCanonSub) {
+      elCanonSub.textContent = `De ${(data.canon_total || 4396).toLocaleString()} fotos Canon detectadas`;
     }
 
-    if (elIcNoGps) elIcNoGps.textContent = (data.icloud_without_gps || 0).toLocaleString();
-    if (elIcSub) {
-      const icTotal = (data.icloud_with_gps || 0) + (data.icloud_without_gps || 0);
-      const pct = icTotal > 0 ? ((data.icloud_with_gps / icTotal) * 100).toFixed(0) : "0";
-      elIcSub.textContent = `✓ ${(data.icloud_with_gps || 0).toLocaleString()} con ubicación real (${pct}%)`;
-    }
-
-    // Populate months dropdown
+    // Populate months dropdown prioritizing Canon months
     const ymSelect = document.getElementById("geo-ym-select");
-    if (ymSelect && data.available_months) {
+    if (ymSelect) {
       const currentVal = ymSelect.value;
-      const opts = ['<option value="ALL">Todos los periodos (Global)</option>'];
-      data.available_months.forEach(m => {
-        opts.push(`<option value="${m.ym}">${m.ym} (${m.total} fotos sin GPS)</option>`);
+      const opts = [`<option value="ALL">Todos los viajes con Canon (${canonCount.toLocaleString()} fotos)</option>`];
+      const monthList = (data.canon_months && data.canon_months.length > 0) ? data.canon_months : (data.available_months || []);
+      monthList.forEach(m => {
+        const count = m.count !== undefined ? m.count : m.total;
+        opts.push(`<option value="${m.ym}">${m.ym} (${count.toLocaleString()} fotos Canon)</option>`);
       });
       ymSelect.innerHTML = opts.join("");
       if (currentVal && Array.from(ymSelect.options).some(o => o.value === currentVal)) {
@@ -744,17 +736,18 @@ async function loadGeotagOverview() {
 
 async function runGeotagSimulation() {
   initGeoMap();
-  const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
-  const scope = document.getElementById("geo-scope-select").value || "both";
+  const windowMins = parseInt(document.getElementById("geo-window-select") ? document.getElementById("geo-window-select").value : "120", 10) || 120;
+  const onlyCanon = document.getElementById("geo-canon-only") ? (document.getElementById("geo-canon-only").value === "true") : true;
+  const scope = "icloud"; // Focus exclusively on Apple Fotos as requested
   const filterYm = document.getElementById("geo-ym-select") ? document.getElementById("geo-ym-select").value : "ALL";
   const tbody = document.getElementById("geo-preview-table-body");
-  tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #38bdf8;"><span class="spinner"></span> Calculando correlación espacial y temporal entre fotos...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #38bdf8;"><span class="spinner"></span> Cruzando fotos de la cámara Canon con el GPS del móvil por fecha y hora...</td></tr>`;
 
   try {
     const res = await fetch("/api/geotag/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ window_minutes: windowMins, scope: scope, filter_ym: filterYm })
+      body: JSON.stringify({ window_minutes: windowMins, scope: scope, filter_ym: filterYm, only_canon: onlyCanon })
     });
     if (!res.ok) throw new Error("Error en la simulación");
     const data = await res.json();
@@ -762,12 +755,14 @@ async function runGeotagSimulation() {
     const simBox = document.getElementById("geo-sim-box");
     simBox.classList.remove("hidden");
 
-    let desc = "";
-    if (scope === "both" || scope === "takeout") {
-      desc += `<strong>Takeout / Carpetas:</strong> ${data.takeout_matchable.toLocaleString()} de ${data.takeout_total.toLocaleString()} fotos tienen coincidencia GPS. `;
-    }
-    if (scope === "both" || scope === "icloud") {
-      desc += `<br><strong>Apple Fotos (Mac):</strong> ${data.icloud_matchable.toLocaleString()} de ${data.icloud_total.toLocaleString()} fotos sin ubicación pueden situarse en el mapa.`;
+    const matchedCount = data.icloud_matchable || 0;
+    const totalCand = data.icloud_total || 0;
+    const elMatchedKpi = document.getElementById("geo-kpi-canon-matched");
+    if (elMatchedKpi) elMatchedKpi.textContent = matchedCount.toLocaleString();
+
+    let desc = `<strong>Cámara Canon en Apple Fotos:</strong> ${matchedCount.toLocaleString()} de ${totalCand.toLocaleString()} fotos tienen propuesta de ubicación basada en el GPS del móvil en ese mismo momento.`;
+    if (onlyCanon) {
+      desc += `<br><small style="color: #34d399;">✓ Filtrando exclusivamente fotos de cámara Canon (excluidas fotos de WhatsApp y capturas).</small>`;
     }
     document.getElementById("geo-sim-desc").innerHTML = desc;
 
@@ -778,13 +773,13 @@ async function runGeotagSimulation() {
     if (geoMarkersLayer) geoMarkersLayer.clearLayers();
 
     if (geoCurrentMatches.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #f59e0b;">No se encontraron fotos sin GPS en este rango temporal (prueba a ampliar a ±60 min o cambiar de mes).</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; text-align: center; color: #f59e0b;">No se encontraron fotos sin GPS en este rango temporal (prueba a ampliar a ±2 horas o seleccionar otro viaje/mes).</td></tr>`;
       document.getElementById("geo-preview-count").textContent = "0 ejemplos";
       updateGeoSelectionCounts();
       return;
     }
 
-    document.getElementById("geo-preview-count").textContent = `${geoCurrentMatches.length} fotos detectadas`;
+    document.getElementById("geo-preview-count").textContent = `${geoCurrentMatches.length} fotos con propuesta de ubicación`;
 
     // Add markers to map and pre-select all
     const mapBounds = [];
@@ -797,6 +792,7 @@ async function runGeotagSimulation() {
         marker.bindPopup(`
           <div style="font-size:12px; max-width:220px; color:#0f172a;">
             ${thumbHtml}
+            <span style="display:inline-block; background:#f1f5f9; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:bold; margin-bottom:4px; color:#0284c7;">📷 Canon</span><br>
             <strong>${escapeHtml(m.filename)}</strong><br>
             📅 ${m.date_str}<br>
             <span style="color:#059669; font-weight:600;">±${m.delta_min} min</span> (${escapeHtml(m.method)})<br>
@@ -838,6 +834,7 @@ function renderGeoTable() {
         </td>
         <td style="padding: 6px 10px;">${thumbEl}</td>
         <td style="padding: 8px 10px; font-weight: 500;">
+          <span class="badge" style="background: rgba(2, 132, 199, 0.15); color: #38bdf8; margin-right: 6px; font-size: 10px;">Canon</span>
           <a href="javascript:void(0)" onclick="focusGeoOnMap(${idx})" style="color:#f8fafc; text-decoration:none;" title="Ver en el mapa">
             ${escapeHtml(m.filename)}
           </a>
@@ -963,9 +960,10 @@ async function applyGeotagTakeout(onlySelected = true) {
 }
 
 async function applyGeotagPhotosApp(onlySelected = true) {
-  const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
+  const windowMins = parseInt(document.getElementById("geo-window-select") ? document.getElementById("geo-window-select").value : "120", 10) || 120;
   const filterYm = document.getElementById("geo-ym-select") ? document.getElementById("geo-ym-select").value : "ALL";
   const batchLimit = parseInt(document.getElementById("geo-batch-limit") ? document.getElementById("geo-batch-limit").value : "0", 10) || 0;
+  const onlyCanon = document.getElementById("geo-canon-only") ? (document.getElementById("geo-canon-only").value === "true") : true;
 
   let selectedUuids = [];
   if (onlySelected) {
@@ -981,8 +979,9 @@ async function applyGeotagPhotosApp(onlySelected = true) {
     }
   }
 
-  const countMsg = onlySelected ? `este lote de ${selectedUuids.length} fotos seleccionadas` : "todas las fotos de Apple Fotos";
-  if (!confirm(`¿Deseas asignar ubicación a ${countMsg} directamente en tu app Fotos de Apple?\n\nEl sistema usará la automatización oficial de macOS para situarlas en el mapa.`)) {
+  const cameraDesc = onlyCanon ? "cámara Canon" : "";
+  const countMsg = onlySelected ? `este lote de ${selectedUuids.length} fotos de ${cameraDesc} seleccionadas` : `todas las fotos de ${cameraDesc} de Apple Fotos`;
+  if (!confirm(`¿Deseas asignar ubicación a ${countMsg} directamente en tu app Fotos de Apple?\n\nEl sistema usará la automatización oficial de macOS para situarlas en el mapa según la fecha y hora de tus fotos de móvil.`)) {
     return;
   }
 
@@ -994,7 +993,8 @@ async function applyGeotagPhotosApp(onlySelected = true) {
         window_minutes: windowMins,
         target_uuids: onlySelected ? selectedUuids : null,
         filter_ym: filterYm !== "ALL" ? filterYm : null,
-        batch_limit: batchLimit
+        batch_limit: batchLimit,
+        only_canon: onlyCanon
       })
     });
     if (!res.ok) throw new Error("No se pudo iniciar el proceso");

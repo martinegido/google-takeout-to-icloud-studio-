@@ -68,6 +68,27 @@ def get_geotag_overview() -> Dict[str, Any]:
         ]
 
         total_anchors = to_with + ic_with
+
+        # Canon camera specific metrics
+        canon_total = conn.execute(
+            "SELECT COUNT(*) FROM icloud_assets WHERE camera_model = 'Canon'"
+        ).fetchone()[0]
+        canon_without_gps = conn.execute(
+            "SELECT COUNT(*) FROM icloud_assets WHERE camera_model = 'Canon' AND (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0"
+        ).fetchone()[0]
+        canon_with_gps = conn.execute(
+            "SELECT COUNT(*) FROM icloud_assets WHERE camera_model = 'Canon' AND lat IS NOT NULL AND ABS(lat) > 0.0001"
+        ).fetchone()[0]
+
+        canon_months_rows = conn.execute(
+            """
+            SELECT year_month, COUNT(*) FROM icloud_assets
+            WHERE camera_model = 'Canon' AND (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month != 'Sin-Fecha'
+            GROUP BY year_month
+            ORDER BY year_month DESC
+            """
+        ).fetchall()
+        canon_months = [{"ym": r[0], "count": r[1]} for r in canon_months_rows]
     finally:
         conn.close()
 
@@ -80,6 +101,10 @@ def get_geotag_overview() -> Dict[str, Any]:
         "icloud_inferred": ic_inferred,
         "total_gps_anchors": total_anchors,
         "available_months": available_months,
+        "canon_total": canon_total,
+        "canon_without_gps": canon_without_gps,
+        "canon_with_gps": canon_with_gps,
+        "canon_months": canon_months,
     }
 
 
@@ -188,16 +213,67 @@ def _interpolate_coords(
     return None
 
 
+def ensure_canon_photos_tagged() -> int:
+    """
+    Checks if camera_model = 'Canon' has been populated in icloud_assets.
+    If not, queries Photos.app via JXA search for 'Canon' and updates the DB.
+    """
+    conn = get_connection()
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM icloud_assets WHERE camera_model = 'Canon'").fetchone()[0]
+        if count > 0:
+            return count
+    finally:
+        conn.close()
+
+    script = '''
+    const photos = Application('Photos');
+    const canon = photos.search({for: 'Canon'});
+    const total = canon.length;
+    let ids = [];
+    for (let i = 0; i < total; i++) {
+        ids.push(canon[i].id());
+    }
+    ids.join(',');
+    '''
+    try:
+        p = subprocess.Popen(['osascript', '-l', 'JavaScript', '-e', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, _ = p.communicate(timeout=90)
+        raw = out.decode('utf-8').strip()
+        ids = [x.strip() for x in raw.split(',') if x.strip()]
+        if ids:
+            conn = get_connection()
+            try:
+                c = conn.cursor()
+                batch_size = 500
+                for i in range(0, len(ids), batch_size):
+                    chunk = ids[i:i+batch_size]
+                    placeholders = ','.join(['?'] * len(chunk))
+                    c.execute(f'UPDATE icloud_assets SET camera_model = "Canon" WHERE uuid IN ({placeholders})', chunk)
+                conn.commit()
+            finally:
+                conn.close()
+            return len(ids)
+    except Exception:
+        pass
+    return 0
+
+
 def simulate_geotag(
-    scope: str = "both",  # 'both', 'takeout', 'icloud'
-    window_minutes: int = 45,
+    scope: str = "icloud",  # Default to Apple Fotos as requested
+    window_minutes: int = 120,
     filter_ym: str = "ALL",
-    max_items: int = 300,
+    max_items: int = 500,
+    only_canon: bool = True,
 ) -> Dict[str, Any]:
     """
     Simulates geotagging without saving any changes.
     Returns preview metrics, available months, and sample matches with full coordinates.
+    Filters specifically for Canon camera photos when only_canon=True.
     """
+    if only_canon:
+        ensure_canon_photos_tagged()
+
     max_window_sec = window_minutes * 60
     times, points = _build_gps_timeline()
 
@@ -206,22 +282,23 @@ def simulate_geotag(
         takeout_candidates = []
         if scope in ("both", "takeout"):
             cur = conn.cursor()
+            canon_clause = "AND (filename LIKE 'IMG_%' OR filename LIKE '_MG_%') AND filename NOT LIKE '%WA%' AND filename NOT LIKE '%.png'" if only_canon else ""
             if filter_ym and filter_ym != "ALL":
                 cur.execute(
-                    """
+                    f"""
                     SELECT id, filename, timestamp, year_month, kind
                     FROM takeout_assets
-                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause} AND year_month = ?
                     ORDER BY timestamp ASC
                     """,
                     (filter_ym,),
                 )
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT id, filename, timestamp, year_month, kind
                     FROM takeout_assets
-                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause}
                     ORDER BY timestamp ASC
                     """
                 )
@@ -230,22 +307,23 @@ def simulate_geotag(
         icloud_candidates = []
         if scope in ("both", "icloud"):
             cur = conn.cursor()
+            canon_clause = "AND camera_model = 'Canon'" if only_canon else ""
             if filter_ym and filter_ym != "ALL":
                 cur.execute(
-                    """
+                    f"""
                     SELECT uuid, filename, timestamp, year_month, kind
                     FROM icloud_assets
-                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause} AND year_month = ?
                     ORDER BY timestamp ASC
                     """,
                     (filter_ym,),
                 )
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT uuid, filename, timestamp, year_month, kind
                     FROM icloud_assets
-                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                    WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause}
                     ORDER BY timestamp ASC
                     """
                 )
@@ -309,6 +387,7 @@ def simulate_geotag(
                         "ref_file": res["ref_file"],
                         "desc": res["desc"],
                         "target_scope": "Apple Fotos (Mac)",
+                        "camera_model": "Canon",
                         "thumb_url": None,
                     }
                 )
@@ -316,6 +395,7 @@ def simulate_geotag(
     return {
         "window_minutes": window_minutes,
         "filter_ym": filter_ym,
+        "only_canon": only_canon,
         "total_gps_anchors": len(points),
         "takeout_total": len(takeout_candidates),
         "takeout_matchable": matched_takeout,
@@ -404,12 +484,14 @@ def apply_geotag_photos_app(
     target_uuids: Optional[List[str]] = None,
     filter_ym: Optional[str] = None,
     batch_limit: int = 0,
+    only_canon: bool = True,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """
     Assigns GPS coordinates directly to photos already inside macOS Photos.app
     using official JXA automation (item.location = [lat, lon]).
+    Optionally filters strictly for camera_model = 'Canon'.
     """
     max_window_sec = window_minutes * 60
     times, points = _build_gps_timeline()
@@ -417,32 +499,33 @@ def apply_geotag_photos_app(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        canon_clause = "AND camera_model = 'Canon'" if only_canon else ""
         if target_uuids:
             placeholders = ",".join("?" for _ in target_uuids)
             cur.execute(
                 f"""
                 SELECT uuid, filename, timestamp
                 FROM icloud_assets
-                WHERE uuid IN ({placeholders}) AND timestamp > 0
+                WHERE uuid IN ({placeholders}) AND timestamp > 0 {canon_clause}
                 """,
                 target_uuids,
             )
         elif filter_ym and filter_ym != "ALL":
             cur.execute(
-                """
+                f"""
                 SELECT uuid, filename, timestamp
                 FROM icloud_assets
-                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 AND year_month = ?
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause} AND year_month = ?
                 ORDER BY timestamp ASC
                 """,
                 (filter_ym,),
             )
         else:
             cur.execute(
-                """
+                f"""
                 SELECT uuid, filename, timestamp
                 FROM icloud_assets
-                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0
+                WHERE (lat IS NULL OR ABS(lat) <= 0.0001) AND timestamp > 0 {canon_clause}
                 ORDER BY timestamp ASC
                 """
             )

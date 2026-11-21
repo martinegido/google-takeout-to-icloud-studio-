@@ -332,10 +332,10 @@
       <div class="panel" style="margin-bottom: 20px;">
         <div class="panel-header">
           <div>
-            <h2>📍 Geolocalizador Inteligente por Proximidad Temporal</h2>
+            <h2>📍 Geolocalizador Inteligente por Fecha — Fotos Cámara Canon (Apple Fotos)</h2>
             <p class="panel-desc" style="margin-bottom:0">
-              Asigna ubicación automáticamente a fotos y vídeos tomados sin GPS (cámaras réflex como Canon EOS, compactas, etc.),
-              cruzando su fecha y hora con fotos del móvil tomadas en el mismo lugar y momento.
+              Asigna ubicación automáticamente a las fotos tomadas con tu cámara réflex Canon (EOS u otros modelos),
+              cruzando su fecha y hora con las fotos del móvil tomadas en el mismo viaje y momento.
             </p>
           </div>
           <button class="btn btn-outline btn-sm" onclick="loadGeotagOverview()">🔄 Actualizar Métricas</button>
@@ -347,61 +347,59 @@
             <span class="kpi-icon">🛰️</span>
             <span class="kpi-label">FOTOS DE REFERENCIA CON GPS</span>
             <span id="geo-kpi-anchors" class="kpi-value">0</span>
-            <span id="geo-kpi-anchors-sub" class="kpi-hint">Móvil / Takeout con coordenadas</span>
+            <span id="geo-kpi-anchors-sub" class="kpi-hint">Tus fotos de móvil en Apple Fotos</span>
           </div>
           <div class="kpi-card">
             <span class="kpi-icon">📷</span>
-            <span class="kpi-label">TAKEOUT / CARPETAS SIN GPS</span>
-            <span id="geo-kpi-takeout-nogps" class="kpi-value">0</span>
-            <span id="geo-kpi-takeout-sub" class="kpi-hint">Listas para geolocalizar</span>
+            <span class="kpi-label">FOTOS CANON SIN UBICACIÓN</span>
+            <span id="geo-kpi-canon-nogps" class="kpi-value">0</span>
+            <span id="geo-kpi-canon-sub" class="kpi-hint">De tu cámara réflex en Apple Fotos</span>
           </div>
           <div class="kpi-card">
-            <span class="kpi-icon">🍎</span>
-            <span class="kpi-label">APPLE FOTOS SIN UBICACIÓN</span>
-            <span id="geo-kpi-icloud-nogps" class="kpi-value">0</span>
-            <span id="geo-kpi-icloud-sub" class="kpi-hint">En tu fototeca del Mac</span>
+            <span class="kpi-icon">✨</span>
+            <span class="kpi-label">CANON CON PROPUESTA GPS</span>
+            <span id="geo-kpi-canon-matched" class="kpi-value">0</span>
+            <span id="geo-kpi-canon-matched-sub" class="kpi-hint">Listas para situar en el mapa</span>
           </div>
         </div>
 
         <!-- Configuration Bar -->
         <div class="batch-launch-bar" style="background: var(--card-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
           <div class="form-group" style="min-width: 220px;">
+            <label for="geo-canon-only">Filtro de Cámara:</label>
+            <select id="geo-canon-only" class="form-control" onchange="runGeotagSimulation()">
+              <option value="true" selected>📷 Solo Fotos Cámara Canon (Recomendado)</option>
+              <option value="false">Todas las fotos sin ubicación</option>
+            </select>
+          </div>
+          <div class="form-group" style="min-width: 240px;">
             <label for="geo-ym-select">Filtrar por Periodo / Viaje:</label>
             <select id="geo-ym-select" class="form-control" onchange="runGeotagSimulation()">
-              <option value="ALL">Todos los periodos (Global)</option>
+              <option value="ALL">Todos los viajes con Canon</option>
             </select>
           </div>
           <div class="form-group" style="min-width: 200px;">
             <label for="geo-window-select">Margen de tiempo (tolerancia):</label>
             <select id="geo-window-select" class="form-control" onchange="runGeotagSimulation()">
-              <option value="15">±15 minutos (Máxima precisión)</option>
               <option value="30">±30 minutos (Mismo lugar)</option>
-              <option value="45" selected>±45 minutos (Recomendado)</option>
-              <option value="60">±60 minutos (1 hora - Excursiones)</option>
-              <option value="120">±120 minutos (2 horas - Amplio)</option>
-            </select>
-          </div>
-          <div class="form-group" style="min-width: 200px;">
-            <label for="geo-scope-select">Ámbito a analizar:</label>
-            <select id="geo-scope-select" class="form-control" onchange="runGeotagSimulation()">
-              <option value="both" selected>Ambos (Takeout y Apple Fotos)</option>
-              <option value="takeout">Solo Takeout / Carpetas</option>
-              <option value="icloud">Solo Apple Fotos</option>
+              <option value="45">±45 minutos (Paseos y visitas)</option>
+              <option value="120" selected>±2 horas (Recomendado excursiones)</option>
+              <option value="240">±4 horas (Medio día)</option>
+              <option value="720">Mismo día (±12 horas - Misma parada)</option>
             </select>
           </div>
           <div class="form-group" style="min-width: 190px;">
             <label for="geo-batch-limit">Tamaño de lote (por tanda):</label>
             <select id="geo-batch-limit" class="form-control" onchange="updateGeoSelectionCounts()">
-              <option value="25">25 fotos (Prueba segura)</option>
               <option value="50" selected>50 fotos (Recomendado)</option>
               <option value="100">100 fotos</option>
               <option value="250">250 fotos</option>
-              <option value="0">Todas las seleccionadas</option>
+              <option value="0">Todas las del periodo</option>
             </select>
           </div>
           <div style="display: flex; gap: 10px; align-items: flex-end;">
             <button class="btn btn-primary" onclick="runGeotagSimulation()">
-              🔍 Simular y Previsualizar
+              🔍 Calcular Propuestas y Ver en Mapa
             </button>
           </div>
         </div>
@@ -425,11 +423,11 @@
               <p id="geo-sim-desc" style="margin: 0; font-size: 0.95rem; color: #cbd5e1;"></p>
             </div>
             <div class="btn-group">
-              <button id="btn-apply-geo-takeout" class="btn btn-primary" onclick="applyGeotagTakeout(true)">
-                📌 Aplicar a Seleccionadas de Takeout (<span id="geo-sel-to-count">0</span>)
+              <button id="btn-apply-geo-photos" class="btn btn-success" style="font-weight: 600; padding: 10px 18px; font-size: 0.95rem;" onclick="applyGeotagPhotosApp(true)">
+                🍏 Asignar Ubicaciones a Apple Fotos (<span id="geo-sel-ic-count">0</span>)
               </button>
-              <button id="btn-apply-geo-photos" class="btn btn-success" onclick="applyGeotagPhotosApp(true)">
-                🍏 Asignar a Seleccionadas de Apple Fotos (<span id="geo-sel-ic-count">0</span>)
+              <button id="btn-apply-geo-takeout" class="btn btn-outline hidden" onclick="applyGeotagTakeout(true)">
+                📌 Aplicar a Takeout (<span id="geo-sel-to-count">0</span>)
               </button>
             </div>
           </div>
