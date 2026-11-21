@@ -675,19 +675,29 @@ async function loadGeotagOverview() {
     if (!res.ok) return;
     const data = await res.json();
     const elAnchors = document.getElementById("geo-kpi-anchors");
+    const elAnchorsSub = document.getElementById("geo-kpi-anchors-sub");
     const elToNoGps = document.getElementById("geo-kpi-takeout-nogps");
     const elToSub = document.getElementById("geo-kpi-takeout-sub");
     const elIcNoGps = document.getElementById("geo-kpi-icloud-nogps");
     const elIcSub = document.getElementById("geo-kpi-icloud-sub");
 
     if (elAnchors) elAnchors.textContent = (data.total_gps_anchors || 0).toLocaleString();
-    if (elToNoGps) elToNoGps.textContent = (data.takeout_without_gps || 0).toLocaleString();
-    if (elToSub && data.takeout_inferred > 0) {
-      elToSub.textContent = `${data.takeout_inferred.toLocaleString()} ya geolocalizadas`;
+    if (elAnchorsSub) {
+      elAnchorsSub.textContent = `${(data.icloud_with_gps || 0).toLocaleString()} en Apple Fotos + ${(data.takeout_with_gps || 0).toLocaleString()} en Takeout`;
     }
+
+    if (elToNoGps) elToNoGps.textContent = (data.takeout_without_gps || 0).toLocaleString();
+    if (elToSub) {
+      elToSub.textContent = data.takeout_inferred > 0 
+        ? `(${data.takeout_inferred.toLocaleString()} ya geolocalizadas)`
+        : `De ${(data.takeout_with_gps + data.takeout_without_gps).toLocaleString()} analizadas`;
+    }
+
     if (elIcNoGps) elIcNoGps.textContent = (data.icloud_without_gps || 0).toLocaleString();
-    if (elIcSub && data.icloud_inferred > 0) {
-      elIcSub.textContent = `${data.icloud_inferred.toLocaleString()} ya geolocalizadas`;
+    if (elIcSub) {
+      const icTotal = (data.icloud_with_gps || 0) + (data.icloud_without_gps || 0);
+      const pct = icTotal > 0 ? ((data.icloud_with_gps / icTotal) * 100).toFixed(0) : "0";
+      elIcSub.textContent = `✓ ${(data.icloud_with_gps || 0).toLocaleString()} con ubicación real (${pct}%)`;
     }
   } catch (e) {
     console.error("Error loading geotag overview:", e);

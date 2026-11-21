@@ -232,16 +232,22 @@ def scan_icloud_via_photos_app(
     const sizes = items.size();
     const widths = items.width();
     const heights = items.height();
+    const locs = items.location();
     const result = [];
     for (let i = 0; i < total; i++) {
         const d = dates[i];
+        const loc = locs[i];
+        const lat = (loc && loc[0] !== null && Math.abs(loc[0]) > 0.0001) ? loc[0] : null;
+        const lon = (loc && loc[1] !== null && Math.abs(loc[1]) > 0.0001) ? loc[1] : null;
         result.push([
             ids[i] || ('id_' + i),
             filenames[i] || '',
             d ? Math.floor(d.getTime() / 1000) : 0,
             sizes[i] || 0,
             widths[i] || 0,
-            heights[i] || 0
+            heights[i] || 0,
+            lat,
+            lon
         ]);
     }
     JSON.stringify({total: total, items: result});
@@ -274,7 +280,7 @@ def scan_icloud_via_photos_app(
     for row in raw_items:
         if should_stop and should_stop():
             raise InterruptedError("Escaneo cancelado por el usuario.")
-        uuid, fn, ts, size, w, h = row
+        uuid, fn, ts, size, w, h, lat, lon = row
         if not fn:
             continue
         norm_name, stem, ext = normalize_filename(fn)
@@ -297,6 +303,8 @@ def scan_icloud_via_photos_app(
                 0.0,
                 int(w or 0),
                 int(h or 0),
+                lat,
+                lon,
             )
         )
 
@@ -307,8 +315,9 @@ def scan_icloud_via_photos_app(
             """
             INSERT OR REPLACE INTO icloud_assets (
                 uuid, filename, original_filename, norm_name, stem, ext,
-                timestamp, year_month, year, month, kind, filesize, duration, width, height
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                timestamp, year_month, year, month, kind, filesize, duration, width, height,
+                lat, lon
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             records,
         )
