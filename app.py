@@ -219,6 +219,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(get_dashboard_summary())
             return
 
+        if path == "/api/geotag/overview":
+            from core.geotag import get_geotag_overview
+            self._send_json(get_geotag_overview())
+            return
+
         if path == "/api/thumbnail":
             asset_id = int(qs.get("id", ["0"])[0])
             thumb_bytes = get_or_create_thumbnail(asset_id) if asset_id > 0 else None
@@ -492,6 +497,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 custom_output_dir=custom_out,
                 progress_cb=_progress_cb,
                 should_pause_or_stop=_should_pause_or_stop,
+            ):
+                self._send_json({"error": "Ya hay una tarea en ejecución."}, status=409)
+                return
+            self._send_json({"status": "started"})
+            return
+
+        if path == "/api/geotag/simulate":
+            from core.geotag import simulate_geotag
+            scope = body.get("scope", "both")
+            window_minutes = int(body.get("window_minutes", 45))
+            res = simulate_geotag(scope=scope, window_minutes=window_minutes)
+            self._send_json(res)
+            return
+
+        if path == "/api/geotag/apply-takeout":
+            from core.geotag import apply_geotag_takeout
+            window_minutes = int(body.get("window_minutes", 45))
+            res = apply_geotag_takeout(window_minutes=window_minutes)
+            self._send_json(res)
+            return
+
+        if path == "/api/geotag/apply-photos-app":
+            from core.geotag import apply_geotag_photos_app
+            window_minutes = int(body.get("window_minutes", 45))
+            if not _start_background_job(
+                "geotag_photos_app",
+                apply_geotag_photos_app,
+                window_minutes=window_minutes,
+                progress_cb=_progress_cb,
+                should_stop=_should_pause_or_stop,
             ):
                 self._send_json({"error": "Ya hay una tarea en ejecución."}, status=409)
                 return

@@ -116,7 +116,9 @@ def scan_icloud_sqlite(
                     attr.ZORIGINALFILESIZE as filesize,
                     a.ZDURATION as duration,
                     a.ZWIDTH as width,
-                    a.ZHEIGHT as height
+                    a.ZHEIGHT as height,
+                    a.ZLATITUDE as latitude,
+                    a.ZLONGITUDE as longitude
                 FROM {asset_table} a
                 LEFT JOIN ZADDITIONALASSETATTRIBUTES attr ON attr.ZASSET = a.Z_PK
                 WHERE a.ZTRASHEDSTATE = 0
@@ -151,6 +153,11 @@ def scan_icloud_sqlite(
         ts = int(raw_date + APPLE_EPOCH_OFFSET) if raw_date is not None else 0
         ym, year, month = timestamp_to_ym(ts)
 
+        raw_lat = r["latitude"]
+        raw_lon = r["longitude"]
+        lat = float(raw_lat) if raw_lat is not None and abs(float(raw_lat)) > 0.0001 else None
+        lon = float(raw_lon) if raw_lon is not None and abs(float(raw_lon)) > 0.0001 else None
+
         records.append(
             (
                 uuid,
@@ -168,6 +175,8 @@ def scan_icloud_sqlite(
                 float(r["duration"] or 0.0),
                 int(r["width"] or 0),
                 int(r["height"] or 0),
+                lat,
+                lon,
             )
         )
 
@@ -181,8 +190,9 @@ def scan_icloud_sqlite(
             """
             INSERT OR REPLACE INTO icloud_assets (
                 uuid, filename, original_filename, norm_name, stem, ext,
-                timestamp, year_month, year, month, kind, filesize, duration, width, height
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                timestamp, year_month, year, month, kind, filesize, duration, width, height,
+                lat, lon
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             records,
         )

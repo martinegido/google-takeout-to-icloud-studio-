@@ -175,6 +175,9 @@
       <button id="tabbtn-imported" class="tab-btn" onclick="switchTab('tab-imported', this)">
         🎉 3. Fotos y Vídeos Ya Importados (<span id="tab-imported-count">0</span>)
       </button>
+      <button id="tabbtn-geotag" class="tab-btn" onclick="switchTab('tab-geotag', this)">
+        📍 4. Geolocalización por Fecha
+      </button>
     </div>
 
     <!-- TAB 1: Year / Month Comparison + Batch Launcher -->
@@ -318,6 +321,116 @@
             <h2>Registro de Actividad en Vivo</h2>
           </div>
           <pre id="live-logs" class="log-box">Listo...</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Smart Temporal Geotagging -->
+    <section id="tab-geotag" class="tab-content">
+      <div class="panel" style="margin-bottom: 20px;">
+        <div class="panel-header">
+          <div>
+            <h2>📍 Geolocalizador Inteligente por Proximidad Temporal</h2>
+            <p class="panel-desc" style="margin-bottom:0">
+              Asigna ubicación automáticamente a fotos y vídeos tomados sin GPS (cámaras réflex como Canon EOS, compactas, etc.),
+              cruzando su fecha y hora con fotos del móvil tomadas en el mismo lugar y momento.
+            </p>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="loadGeotagOverview()">🔄 Actualizar Métricas</button>
+        </div>
+
+        <!-- Metric Cards -->
+        <div class="kpi-grid" style="margin-top: 15px; margin-bottom: 20px;">
+          <div class="kpi-card">
+            <span class="kpi-icon">🛰️</span>
+            <span class="kpi-label">FOTOS DE REFERENCIA CON GPS</span>
+            <span id="geo-kpi-anchors" class="kpi-value">0</span>
+            <span class="kpi-hint">Móvil / Takeout con coordenadas</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-icon">📷</span>
+            <span class="kpi-label">TAKEOUT / CARPETAS SIN GPS</span>
+            <span id="geo-kpi-takeout-nogps" class="kpi-value">0</span>
+            <span id="geo-kpi-takeout-sub" class="kpi-hint">Listas para geolocalizar</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-icon">🍎</span>
+            <span class="kpi-label">APPLE FOTOS SIN UBICACIÓN</span>
+            <span id="geo-kpi-icloud-nogps" class="kpi-value">0</span>
+            <span id="geo-kpi-icloud-sub" class="kpi-hint">En tu fototeca del Mac</span>
+          </div>
+        </div>
+
+        <!-- Configuration Bar -->
+        <div class="batch-launch-bar" style="background: var(--card-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+          <div class="form-group" style="min-width: 220px;">
+            <label for="geo-window-select">Margen de tiempo (tolerancia):</label>
+            <select id="geo-window-select" class="form-control" onchange="runGeotagSimulation()">
+              <option value="15">±15 minutos (Máxima precisión)</option>
+              <option value="30">±30 minutos (Mismo lugar)</option>
+              <option value="45" selected>±45 minutos (Recomendado)</option>
+              <option value="60">±60 minutos (1 hora - Excursiones)</option>
+              <option value="120">±120 minutos (2 horas - Amplio)</option>
+            </select>
+          </div>
+          <div class="form-group" style="min-width: 220px;">
+            <label for="geo-scope-select">Ámbito a analizar:</label>
+            <select id="geo-scope-select" class="form-control" onchange="runGeotagSimulation()">
+              <option value="both" selected>Ambos (Takeout/Carpetas y Apple Fotos)</option>
+              <option value="takeout">Solo Takeout / Carpetas pendientes</option>
+              <option value="icloud">Solo Fotos ya en Apple Fotos</option>
+            </select>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: flex-end;">
+            <button class="btn btn-secondary" onclick="runGeotagSimulation()">
+              🔍 Simular y Comprobar
+            </button>
+          </div>
+        </div>
+
+        <!-- Simulation Result Box -->
+        <div id="geo-sim-box" class="panel hidden" style="background: rgba(37, 99, 235, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h3 id="geo-sim-title" style="margin: 0 0 6px 0; color: #38bdf8;">Resultados de la Simulación</h3>
+              <p id="geo-sim-desc" style="margin: 0; font-size: 0.95rem; color: #cbd5e1;"></p>
+            </div>
+            <div class="btn-group">
+              <button id="btn-apply-geo-takeout" class="btn btn-primary" onclick="applyGeotagTakeout()">
+                📌 Aplicar a Takeout / Carpetas
+              </button>
+              <button id="btn-apply-geo-photos" class="btn btn-success" onclick="applyGeotagPhotosApp()">
+                🍏 Asignar a Fotos en Apple Fotos
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview Table -->
+        <div class="panel-header" style="margin-top: 10px;">
+          <h3>Vista Previa de Coincidencias Geográficas Detectadas</h3>
+          <span id="geo-preview-count" class="badge">0 ejemplos</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="data-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="text-align: left; border-bottom: 1px solid var(--border-color);">
+                <th style="padding: 10px;">Archivo sin GPS</th>
+                <th style="padding: 10px;">Fecha y Hora</th>
+                <th style="padding: 10px;">Ubicación Calculada</th>
+                <th style="padding: 10px;">Margen</th>
+                <th style="padding: 10px;">Método y Foto de Referencia</th>
+                <th style="padding: 10px;">Destino</th>
+              </tr>
+            </thead>
+            <tbody id="geo-preview-table-body">
+              <tr>
+                <td colspan="6" style="padding: 20px; text-align: center; color: #94a3b8;">
+                  Haz clic en <strong>«🔍 Simular y Comprobar»</strong> para ver los cálculos en tiempo real.
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

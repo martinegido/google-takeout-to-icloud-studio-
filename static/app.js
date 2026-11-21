@@ -663,6 +663,127 @@ function switchTab(tabId, btnEl) {
     loadBatches();
     loadImportedGallery(1);
   }
+  if (tabId === "tab-geotag") {
+    loadGeotagOverview();
+  }
+}
+
+// ==================== GEOTAGGING TAB LOGIC ====================
+async function loadGeotagOverview() {
+  try {
+    const res = await fetch("/api/geotag/overview");
+    if (!res.ok) return;
+    const data = await res.json();
+    const elAnchors = document.getElementById("geo-kpi-anchors");
+    const elToNoGps = document.getElementById("geo-kpi-takeout-nogps");
+    const elToSub = document.getElementById("geo-kpi-takeout-sub");
+    const elIcNoGps = document.getElementById("geo-kpi-icloud-nogps");
+    const elIcSub = document.getElementById("geo-kpi-icloud-sub");
+
+    if (elAnchors) elAnchors.textContent = (data.total_gps_anchors || 0).toLocaleString();
+    if (elToNoGps) elToNoGps.textContent = (data.takeout_without_gps || 0).toLocaleString();
+    if (elToSub && data.takeout_inferred > 0) {
+      elToSub.textContent = `${data.takeout_inferred.toLocaleString()} ya geolocalizadas`;
+    }
+    if (elIcNoGps) elIcNoGps.textContent = (data.icloud_without_gps || 0).toLocaleString();
+    if (elIcSub && data.icloud_inferred > 0) {
+      elIcSub.textContent = `${data.icloud_inferred.toLocaleString()} ya geolocalizadas`;
+    }
+  } catch (e) {
+    console.error("Error loading geotag overview:", e);
+  }
+}
+
+async function runGeotagSimulation() {
+  const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
+  const scope = document.getElementById("geo-scope-select").value || "both";
+  const tbody = document.getElementById("geo-preview-table-body");
+  tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #38bdf8;"><span class="spinner"></span> Calculando correlación espacial y temporal entre fotos...</td></tr>`;
+
+  try {
+    const res = await fetch("/api/geotag/simulate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ window_minutes: windowMins, scope: scope })
+    });
+    if (!res.ok) throw new Error("Error en la simulación");
+    const data = await res.json();
+
+    const simBox = document.getElementById("geo-sim-box");
+    simBox.classList.remove("hidden");
+
+    let desc = "";
+    if (scope === "both" || scope === "takeout") {
+      desc += `<strong>Takeout / Carpetas:</strong> ${data.takeout_matchable.toLocaleString()} de ${data.takeout_total.toLocaleString()} fotos pueden geolocalizarse. `;
+    }
+    if (scope === "both" || scope === "icloud") {
+      desc += `<br><strong>Apple Fotos (Mac):</strong> ${data.icloud_matchable.toLocaleString()} de ${data.icloud_total.toLocaleString()} fotos sin ubicación pueden situarse en el mapa.`;
+    }
+    document.getElementById("geo-sim-desc").innerHTML = desc;
+
+    document.getElementById("geo-preview-count").textContent = `${(data.sample_matches || []).length} ejemplos mostrados`;
+
+    if (!data.sample_matches || data.sample_matches.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #f59e0b;">No se encontraron fotos sin GPS en este rango temporal (prueba a ampliar a ±60 min o ±120 min).</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.sample_matches.map(m => `
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem;">
+        <td style="padding: 10px; font-weight: 500;">${escapeHtml(m.filename)}</td>
+        <td style="padding: 10px; color: #94a3b8;">${m.date_str}</td>
+        <td style="padding: 10px;">
+          <a href="https://www.google.com/maps?q=${m.assigned_lat},${m.assigned_lon}" target="_blank" style="color: #38bdf8; text-decoration: underline;" title="Ver en Google Maps">
+            📍 ${m.assigned_lat.toFixed(4)}, ${m.assigned_lon.toFixed(4)}
+          </a>
+        </td>
+        <td style="padding: 10px;"><span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399;">±${m.delta_min} min</span></td>
+        <td style="padding: 10px; color: #cbd5e1;"><small>${escapeHtml(m.desc)}</small></td>
+        <td style="padding: 10px;"><span class="badge">${m.target_scope}</span></td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding: 20px; text-align: center; color: #ef4444;">Error ejecutando la simulación: ${e.message}</td></tr>`;
+  }
+}
+
+async function applyGeotagTakeout() {
+  const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
+  if (!confirm(`¿Deseas asignar ubicación por proximidad temporal (margen ±${windowMins} min) a las fotos pendientes de Takeout / Carpetas?\n\nAl procesar las tandas, ExifTool grabará estas coordenadas en los archivos para que entren con mapa en Apple Fotos.`)) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/geotag/apply-takeout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ window_minutes: windowMins })
+    });
+    const data = await res.json();
+    alert(`¡Hecho! Se han geolocalizado ${data.updated_count.toLocaleString()} fotos en Takeout / Carpetas. Cuando las importes, se subirán con estas coordenadas.`);
+    await loadGeotagOverview();
+    runGeotagSimulation();
+  } catch (e) {
+    alert("Error aplicando coordenadas a Takeout: " + e.message);
+  }
+}
+
+async function applyGeotagPhotosApp() {
+  const windowMins = parseInt(document.getElementById("geo-window-select").value, 10) || 45;
+  if (!confirm(`¿Deseas asignar ubicación a las fotos que YA están dentro de la app Fotos de Apple en tu Mac (margen ±${windowMins} min)?\n\nEl sistema usará la automatización oficial de Photos.app para situarlas en el mapa.`)) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/geotag/apply-photos-app", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ window_minutes: windowMins })
+    });
+    if (!res.ok) throw new Error("No se pudo iniciar el proceso");
+    alert("¡Proceso iniciado en segundo plano! Puedes seguir el progreso en la barra superior.");
+    pollStatus();
+  } catch (e) {
+    alert("Error iniciando geolocalización en Fotos.app: " + e.message);
+  }
 }
 
 window.addEventListener("DOMContentLoaded", async () => {

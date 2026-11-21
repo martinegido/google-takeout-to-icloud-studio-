@@ -46,7 +46,11 @@ def init_db() -> None:
                     filesize INTEGER DEFAULT 0,
                     duration REAL DEFAULT 0,
                     width INTEGER DEFAULT 0,
-                    height INTEGER DEFAULT 0
+                    height INTEGER DEFAULT 0,
+                    lat REAL,
+                    lon REAL,
+                    gps_inferred INTEGER DEFAULT 0,
+                    gps_source TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_icloud_norm_name ON icloud_assets(norm_name);
@@ -119,6 +123,27 @@ def init_db() -> None:
                 """
             )
             conn.commit()
+
+            # Migrations for existing tables
+            try:
+                ic_cols = [r[1] for r in conn.execute("PRAGMA table_info(icloud_assets)").fetchall()]
+                if "lat" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN lat REAL")
+                if "lon" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN lon REAL")
+                if "gps_inferred" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN gps_inferred INTEGER DEFAULT 0")
+                if "gps_source" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN gps_source TEXT")
+
+                to_cols = [r[1] for r in conn.execute("PRAGMA table_info(takeout_assets)").fetchall()]
+                if "gps_inferred" not in to_cols:
+                    conn.execute("ALTER TABLE takeout_assets ADD COLUMN gps_inferred INTEGER DEFAULT 0")
+                if "gps_source" not in to_cols:
+                    conn.execute("ALTER TABLE takeout_assets ADD COLUMN gps_source TEXT")
+                conn.commit()
+            except Exception:
+                pass
         finally:
             conn.close()
 
@@ -142,5 +167,26 @@ def set_setting(key: str, value: str) -> None:
                 (key, value),
             )
             conn.commit()
+
+            # Migrations for existing tables
+            try:
+                ic_cols = [r[1] for r in conn.execute("PRAGMA table_info(icloud_assets)").fetchall()]
+                if "lat" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN lat REAL")
+                if "lon" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN lon REAL")
+                if "gps_inferred" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN gps_inferred INTEGER DEFAULT 0")
+                if "gps_source" not in ic_cols:
+                    conn.execute("ALTER TABLE icloud_assets ADD COLUMN gps_source TEXT")
+
+                to_cols = [r[1] for r in conn.execute("PRAGMA table_info(takeout_assets)").fetchall()]
+                if "gps_inferred" not in to_cols:
+                    conn.execute("ALTER TABLE takeout_assets ADD COLUMN gps_inferred INTEGER DEFAULT 0")
+                if "gps_source" not in to_cols:
+                    conn.execute("ALTER TABLE takeout_assets ADD COLUMN gps_source TEXT")
+                conn.commit()
+            except Exception:
+                pass
         finally:
             conn.close()
